@@ -44,15 +44,26 @@ public sealed class Player
                 if (ct.IsCancellationRequested)
                     break;
 
-                Emit(new PlaybackEvent(PlaybackEventKind.IterationStarted, item.Iteration, total, RowNumber: item.RowNumber));
-                var context = options.FreshSessionPerIteration
-                    ? await NewContextAsync(browser, scenario, options)
-                    : sharedContext ??= await NewContextAsync(browser, scenario, options);
+                IterationResult iteration;
+                var attempt = 0;
+                while (true)
+                {
+                    attempt++;
+                    Emit(new PlaybackEvent(PlaybackEventKind.IterationStarted, item.Iteration, total, RowNumber: item.RowNumber));
+                    var context = options.FreshSessionPerIteration
+                        ? await NewContextAsync(browser, scenario, options)
+                        : sharedContext ??= await NewContextAsync(browser, scenario, options);
 
-                var iteration = await RunIterationAsync(scenario, options, item, total, context, Emit, ct);
+                    iteration = await RunIterationAsync(scenario, options, item, attempt, total, context, Emit, ct);
 
-                if (options.FreshSessionPerIteration)
-                    await SafeCloseAsync(context);
+                    if (options.FreshSessionPerIteration)
+                        await SafeCloseAsync(context);
+                    if (iteration.Success || ct.IsCancellationRequested || attempt > options.RetryCount)
+                        break;
+                    Emit(new PlaybackEvent(PlaybackEventKind.Info, item.Iteration, total, RowNumber: item.RowNumber,
+                        Message: $"Tekrar {item.Iteration} hatalı, baştan yeniden deneniyor ({attempt}/{options.RetryCount})..."));
+                }
+                iteration = iteration with { Attempts = attempt };
 
                 // İptal anında yarıda kalan tekrar sonuçlara hata olarak yazılmaz.
                 if (ct.IsCancellationRequested && !iteration.Success)
@@ -110,12 +121,12 @@ public sealed class Player
             ViewportSize = BrowserFactory.ViewportFor(scenario.Browser) ?? new ViewportSize { Width = 1280, Height = 800 },
         });
         context.SetDefaultTimeout(options.ActionTimeoutMs);
-        context.SetDefaultNavigationTimeout(Math.Max(options.ActionTimeoutMs, 30_000));
+        context.SetDefaultNavigationTimeout(options.NavigationTimeoutMs);
         return context;
     }
 
     private async Task<IterationResult> RunIterationAsync(
-        Scenario scenario, PlaybackOptions options, PlanItem item, int total, IBrowserContext context,
+        Scenario scenario, PlaybackOptions options, PlanItem item, int attempt, int total, IBrowserContext context,
         Action<PlaybackEvent> emit, CancellationToken ct)
     {
         var watch = Stopwatch.StartNew();
@@ -155,7 +166,8 @@ public sealed class Player
                     StepDescriber.Describe(step, value), item.RowNumber));
 
                 var page = await GetPageAsync(pages, step.PageIndex, options.ActionTimeoutMs, ct);
-                await ExecuteAsync(page, step, value, item, options, ct);
+                await ExecuteAsync(page, step, value, item, options, msg =>
+                    emit(new PlaybackEvent(PlaybackEventKind.Info, item.Iteration, total, i, stepCount, msg, item.RowNumber)), ct);
 
                 emit(new PlaybackEvent(PlaybackEventKind.StepCompleted, item.Iteration, total, i, stepCount, RowNumber: item.RowNumber));
             }
@@ -165,7 +177,7 @@ public sealed class Player
                 var message = cancelled ? "İptal edildi" : CleanMessage(ex);
                 string? shot = null;
                 if (!cancelled)
-                    shot = await TryScreenshotAsync(pages, step.PageIndex, options, item.Iteration, i);
+                    shot = await TryScreenshotAsync(pages, step.PageIndex, options, item.Iteration, attempt, i);
                 emit(new PlaybackEvent(PlaybackEventKind.StepFailed, item.Iteration, total, i, stepCount, message, item.RowNumber));
                 return new IterationResult(item.Iteration, item.RowNumber, false, i, message, watch.Elapsed, shot);
             }
@@ -183,7 +195,27 @@ public sealed class Player
         return (int)delay;
     }
 
-    private async Task ExecuteAsync(IPage page, Step step, string? value, PlanItem item, PlaybackOptions options, CancellationToken ct)
+    private async Task ExecuteAsync(
+        IPage page, Step step, string? value, PlanItem item, PlaybackOptions options, Action<string> info, CancellationToken ct)
+    {
+        // Adıma özel zaman aşımı tanımlıysa Playwright işlemleri de o süreyi kullanır.
+        var timeoutMs = step.TimeoutMs ?? options.ActionTimeoutMs;
+        if (step.TimeoutMs is not null)
+            page.SetDefaultTimeout(timeoutMs);
+        try
+        {
+            await ExecuteCoreAsync(page, step, value, item, options, timeoutMs, info, ct);
+        }
+        finally
+        {
+            if (step.TimeoutMs is not null && !page.IsClosed)
+                page.SetDefaultTimeout(options.ActionTimeoutMs);
+        }
+    }
+
+    private async Task ExecuteCoreAsync(
+        IPage page, Step step, string? value, PlanItem item, PlaybackOptions options, int timeoutMs,
+        Action<string> info, CancellationToken ct)
     {
         switch (step.Type)
         {
@@ -194,13 +226,36 @@ public sealed class Player
                 await Task.Delay(int.Parse(value ?? "0"), ct);
                 return;
             case StepType.Press when step.Selectors.Count == 0:
-                await page.Keyboard.PressAsync(value ?? "Enter");
+                using (var watcher = new NavigationWatcher(page))
+                {
+                    await page.Keyboard.PressAsync(value ?? "Enter");
+                    await watcher.WaitAsync(step, options, info, ct);
+                }
+                return;
+            case StepType.WaitForText:
+                var textFrame = await GetFrameAsync(page, step, timeoutMs, ct);
+                var text = textFrame.GetByText(value ?? "").Filter(new LocatorFilterOptions { Visible = true }).First;
+                try
+                {
+                    await text.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
+                }
+                catch (TimeoutException ex)
+                {
+                    throw new StepFailedException($"\"{value}\" yazısı {timeoutMs / 1000.0:0.#} sn içinde sayfada görünmedi.", ex);
+                }
                 return;
         }
 
-        var frame = await GetFrameAsync(page, step, options.ActionTimeoutMs, ct);
-        var target = await ResolveTargetAsync(frame, step, value, item, options.ActionTimeoutMs, ct);
+        var frame = await GetFrameAsync(page, step, timeoutMs, ct);
+        var target = await ResolveTargetAsync(frame, step, value, item, timeoutMs, ct);
 
+        if (step.Type == StepType.WaitForElement)
+        {
+            await target.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
+            return;
+        }
+
+        using var navigation = new NavigationWatcher(page);
         switch (step.Type)
         {
             case StepType.Click:
@@ -243,6 +298,8 @@ public sealed class Player
             default:
                 throw new StepFailedException($"Desteklenmeyen adım türü: {step.Type}");
         }
+
+        await navigation.WaitAsync(step, options, info, ct);
     }
 
     // Görsel olarak gizlenmiş (özel tasarımlı) onay kutularında Playwright tıklayamaz;
@@ -363,7 +420,8 @@ public sealed class Player
         }
     }
 
-    private static async Task<string?> TryScreenshotAsync(List<IPage> pages, int pageIndex, PlaybackOptions options, int iteration, int stepIndex)
+    private static async Task<string?> TryScreenshotAsync(
+        List<IPage> pages, int pageIndex, PlaybackOptions options, int iteration, int attempt, int stepIndex)
     {
         if (options.ScreenshotDirectory is null)
             return null;
@@ -375,7 +433,9 @@ public sealed class Player
         try
         {
             Directory.CreateDirectory(options.ScreenshotDirectory);
-            var path = Path.Combine(options.ScreenshotDirectory, $"tekrar{iteration:D4}-adim{stepIndex + 1:D3}.png");
+            var path = Path.Combine(options.ScreenshotDirectory, attempt > 1
+                ? $"tekrar{iteration:D4}-deneme{attempt}-adim{stepIndex + 1:D3}.png"
+                : $"tekrar{iteration:D4}-adim{stepIndex + 1:D3}.png");
             await page.ScreenshotAsync(new PageScreenshotOptions { Path = path, Timeout = 5000 });
             return path;
         }

@@ -44,14 +44,25 @@ public sealed partial class StepViewModel : ObservableObject
 
     public string TargetName => Step.Type switch
     {
-        StepType.Navigate or StepType.Wait => "",
+        StepType.Navigate or StepType.Wait or StepType.WaitForText => "",
         StepType.Press when Step.Selectors.Count == 0 => "sayfa",
         _ => string.IsNullOrWhiteSpace(Step.TargetName) ? Step.Selectors.FirstOrDefault() ?? "" : Step.TargetName,
     };
 
-    public string TargetKindText => Step.Type is StepType.Navigate or StepType.Wait || Step.Selectors.Count == 0
-        ? ""
-        : StepDescriber.Kind(Step.TargetKind);
+    public string TargetKindText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (Step.Type is not (StepType.Navigate or StepType.Wait or StepType.WaitForText) && Step.Selectors.Count > 0)
+                parts.Add(StepDescriber.Kind(Step.TargetKind));
+            if (Step.WaitForNavigation)
+                parts.Add("ardından yeni sayfa beklenir");
+            if (Step.TimeoutMs is { } t)
+                parts.Add($"en fazla {t / 1000.0:0.#} sn");
+            return string.Join(" · ", parts);
+        }
+    }
 
     public IBrush ActionBrush => Step.Type switch
     {
@@ -68,6 +79,8 @@ public sealed partial class StepViewModel : ObservableObject
         Step.Selectors.Count > 0 ? "Seçiciler:\n  " + string.Join("\n  ", Step.Selectors) : null,
         Step.FrameUrl is not null ? $"Çerçeve: {Step.FrameUrl}" : null,
         Step.PageIndex > 0 ? $"{Step.PageIndex + 1}. sekme" : null,
+        Step.WaitForNavigation ? "Bu adımdan sonra yeni sayfanın yüklenmesi beklenir." : null,
+        Step.TimeoutMs is { } t ? $"En fazla {t / 1000.0:0.#} sn beklenir." : null,
     }.Where(s => s is not null));
 
     public bool Enabled
@@ -81,7 +94,7 @@ public sealed partial class StepViewModel : ObservableObject
     }
 
     public bool HasValue => Step.Type is StepType.Navigate or StepType.Fill or StepType.Select
-        or StepType.Press or StepType.Upload or StepType.Wait;
+        or StepType.Press or StepType.Upload or StepType.Wait or StepType.WaitForText;
 
     public bool IsValueEditable => HasValue && !IsBound;
 
@@ -92,6 +105,7 @@ public sealed partial class StepViewModel : ObservableObject
     {
         StepType.Wait => "milisaniye",
         StepType.Upload => "tam dosya yolu",
+        StepType.WaitForText => "beklenecek yazı",
         _ => "",
     };
 

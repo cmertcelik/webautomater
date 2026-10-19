@@ -28,7 +28,53 @@ public sealed class TestServer : IDisposable
         </body></html>
         """;
 
+    // Sihirbaz: ilk sayfadaki "İleri" ikinci sayfayı yavaş yükler; ikinci sayfada da "İleri" vardır.
+    // Yeni sayfa beklenmezse ikinci tıklama hâlâ ekranda duran ilk sayfadaki butona gider.
+    public const string WizardPage = """
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
+          <h1>Adım 1</h1>
+          <form action="/wizard2" method="get"><button type="submit">İleri</button></form>
+        </body></html>
+        """;
+
+    // Aynı sihirbaz, ama geçişi sitenin betiği 600 ms gecikmeyle başlatıyor (önce istek atıp sonra
+    // yönlendiren siteler gibi). Playwright tıklama sırasında başlamayan geçişi kendisi beklemez.
+    public const string WizardJsPage = """
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
+          <h1>Adım 1</h1>
+          <form id="f" action="/wizard2" method="get"></form>
+          <button type="button" onclick="setTimeout(() => document.getElementById('f').submit(), 600)">İleri</button>
+        </body></html>
+        """;
+
+    public const string Wizard2Page = """
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
+          <h1>Adım 2</h1>
+          <form action="/submit" method="get"><input type="hidden" name="from" value="wizard2"><button type="submit">İleri</button></form>
+        </body></html>
+        """;
+
+    // Buton ve "Hazır" yazısı sayfa açıldıktan 2,5 sn sonra belirir (sunucudan geç gelen içerik gibi).
+    public const string LatePage = """
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
+          <div id="area">Yükleniyor...</div>
+          <script>
+            setTimeout(() => {
+              document.getElementById('area').innerHTML =
+                '<p>Hazır</p><form action="/submit" method="get"><input type="hidden" name="late" value="1"><button type="submit">Gönder</button></form>';
+            }, 2500);
+          </script>
+        </body></html>
+        """;
+
+    public const string FlakyGoodPage = """
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
+          <form action="/submit" method="get"><input type="hidden" name="flaky" value="1"><button type="submit">Gönder</button></form>
+        </body></html>
+        """;
+
     private readonly HttpListener _listener = new();
+    private int _flakyHits;
     private readonly CancellationTokenSource _cts = new();
 
     public TestServer()
@@ -41,6 +87,8 @@ public sealed class TestServer : IDisposable
     }
 
     public string BaseUrl { get; }
+
+    public int Wizard2DelayMs { get; set; } = 1500;
 
     public ConcurrentQueue<string> Submissions { get; } = new();
 
@@ -65,11 +113,34 @@ public sealed class TestServer : IDisposable
     {
         {
             var path = ctx.Request.Url!.AbsolutePath;
-            var body = "<html><body>ok</body></html>";
-            if (path == "/submit")
-                Submissions.Enqueue(WebUtility.UrlDecode(ctx.Request.Url.Query.TrimStart('?')));
-            else
-                body = FormPage;
+            string body;
+            switch (path)
+            {
+                case "/submit":
+                    Submissions.Enqueue(WebUtility.UrlDecode(ctx.Request.Url.Query.TrimStart('?')));
+                    body = "<html><body>ok</body></html>";
+                    break;
+                case "/wizard":
+                    body = WizardPage;
+                    break;
+                case "/wizardjs":
+                    body = WizardJsPage;
+                    break;
+                case "/wizard2":
+                    await Task.Delay(Wizard2DelayMs);
+                    body = Wizard2Page;
+                    break;
+                case "/late":
+                    body = LatePage;
+                    break;
+                case "/flaky":
+                    // İlk istek bozuk sayfa döner (geçici sunucu hatası gibi), sonrakiler düzgün.
+                    body = Interlocked.Increment(ref _flakyHits) == 1 ? "<html><body>Hata</body></html>" : FlakyGoodPage;
+                    break;
+                default:
+                    body = FormPage;
+                    break;
+            }
             var bytes = Encoding.UTF8.GetBytes(body);
             ctx.Response.ContentType = "text/html; charset=utf-8";
             ctx.Response.ContentLength64 = bytes.Length;

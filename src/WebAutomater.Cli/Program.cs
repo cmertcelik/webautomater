@@ -36,6 +36,10 @@ app.Configure(config =>
     config.AddCommand<EditCommand>("edit")
         .WithDescription("Bir adımın değerini, bekleme süresini veya etkinliğini değiştirir.")
         .WithExample("edit", "giris.wa.json", "--step", "4", "--delay", "2000");
+    config.AddCommand<AddWaitCommand>("add-wait")
+        .WithDescription("Senaryoya bekleme adımı ekler: sabit süre, bir yazı ya da bir öğe görünene kadar.")
+        .WithExample("add-wait", "giris.wa.json", "--after", "5", "--text", "Sipariş alındı")
+        .WithExample("add-wait", "giris.wa.json", "--element", "7", "--timeout", "60000");
     config.AddCommand<PlayCommand>("play")
         .WithDescription("Senaryoyu N kez ya da veri kaynağındaki her satır için oynatır.")
         .WithExample("play", "giris.wa.json", "-n", "50")

@@ -62,7 +62,7 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
         public int? MaxDelay { get; init; }
 
         [CommandOption("--timeout")]
-        [Description("Öğenin görünmesi için en uzun bekleme (ms).")]
+        [Description("Sayfa/öğe geç yüklenirse en uzun bekleme (ms); öğe gelir gelmez devam edilir.")]
         [DefaultValue(15000)]
         public int Timeout { get; init; } = 15000;
 
@@ -75,6 +75,11 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
         [Description("Tekrarlar arası bekleme (ms).")]
         [DefaultValue(0)]
         public int Pause { get; init; }
+
+        [CommandOption("--retries")]
+        [Description("Hatalı tekrarı baştan yeniden deneme sayısı (geçici ağ/sunucu aksaklıkları için).")]
+        [DefaultValue(0)]
+        public int Retries { get; init; }
 
         [CommandOption("--stop-on-error")]
         [Description("İlk hatada dur (varsayılan: sonraki tekrara geç).")]
@@ -134,6 +139,7 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
             ActionTimeoutMs = settings.Timeout,
             TypeDelayMs = settings.TypeDelay,
             DelayBetweenIterationsMs = settings.Pause,
+            RetryCount = Math.Max(0, settings.Retries),
             ContinueOnError = !settings.StopOnError,
             FreshSessionPerIteration = !settings.KeepSession,
             ScreenshotDirectory = settings.Screenshots ?? Path.Combine(Environment.CurrentDirectory, "wa-hatalar"),
@@ -161,7 +167,7 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
         switch (e.Kind)
         {
             case PlaybackEventKind.Info:
-                AnsiConsole.MarkupLine($"[grey]{Markup.Escape(e.Message ?? "")}[/]");
+                AnsiConsole.MarkupLine($"{(e.Iteration > 0 ? prefix + " " : "")}[grey]{Markup.Escape(e.Message ?? "")}[/]");
                 break;
             case PlaybackEventKind.StepStarted when verbose:
                 AnsiConsole.MarkupLine($"{prefix}   {e.StepIndex + 1}. {Markup.Escape(e.Message ?? "")}");

@@ -29,6 +29,8 @@ public sealed class Recorder : IAsyncDisposable
     private readonly object _gate = new();
     private readonly List<IPage> _pages = [];
     private readonly Dictionary<IPage, string> _lastUrls = [];
+    // Ana çerçevede başlamış ama henüz tamamlanmamış sayfa geçişinin başlangıç zamanı.
+    private readonly Dictionary<IPage, long> _navigationStarts = [];
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IPlaywright? _playwright;
     private IBrowser? _browser;
@@ -126,6 +128,13 @@ public sealed class Recorder : IAsyncDisposable
             _lastUrls[page] = page.Url;
         }
 
+        page.Request += (_, request) =>
+        {
+            if (!request.IsNavigationRequest || request.Frame != page.MainFrame)
+                return;
+            lock (_gate)
+                _navigationStarts.TryAdd(page, Now()); // Yönlendirmelerde ilk başlangıç esas alınır.
+        };
         page.FrameNavigated += (_, frame) =>
         {
             if (frame == page.MainFrame)
@@ -141,18 +150,28 @@ public sealed class Recorder : IAsyncDisposable
         };
     }
 
-    // Kullanıcı adres çubuğuna yeni bir adres yazdıysa bunu ayrı bir adım olarak kaydeder.
+    // Bir işlemin hemen ardından başlayan sayfa geçişi o işlemin sonucudur: işlem işaretlenir ki
+    // oynatmada yeni sayfa beklensin. Aksi halde kullanıcı adres çubuğuna yeni bir adres yazmıştır.
     private void OnMainFrameNavigated(IPage page, string url)
     {
         lock (_gate)
         {
             var previous = _lastUrls.GetValueOrDefault(page);
             _lastUrls[page] = url;
-            if (!_started || url == previous || url == "about:blank")
+            var now = Now();
+            // Geçişin bittiği an değil başladığı an karşılaştırılır; sunucu yavaş yanıt verse de
+            // geçiş doğru işleme bağlanır. Aynı belge içi geçişlerde (SPA) istek olmaz.
+            var isDocumentLoad = _navigationStarts.Remove(page, out var startedAt);
+            if (!_started)
                 return;
 
-            var now = Now();
-            if (now - _lastActionTs < NavigationAttributionMs)
+            if ((isDocumentLoad ? startedAt : now) - _lastActionTs < NavigationAttributionMs)
+            {
+                if (isDocumentLoad)
+                    MarkLastActionAsNavigating(page);
+                return;
+            }
+            if (url == previous || url == "about:blank")
                 return;
 
             var delay = (int)Math.Max(0, now - _lastTs);
@@ -165,6 +184,23 @@ public sealed class Recorder : IAsyncDisposable
                 PageIndex = _pages.IndexOf(page),
                 DelayBeforeMs = delay,
             });
+        }
+    }
+
+    private void MarkLastActionAsNavigating(IPage page)
+    {
+        var pageIndex = _pages.IndexOf(page);
+        for (var i = Scenario.Steps.Count - 1; i >= 0; i--)
+        {
+            var step = Scenario.Steps[i];
+            if (step.PageIndex != pageIndex)
+                continue;
+            if (step.Type is not (StepType.Navigate or StepType.Wait) && !step.WaitForNavigation)
+            {
+                step.WaitForNavigation = true;
+                Raise(StepChangeKind.Updated, step, i);
+            }
+            return;
         }
     }
 

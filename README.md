@@ -49,7 +49,7 @@ dotnet run --project src/WebAutomater.Gui
 1. Üstteki **Adres** kutusuna siteyi yazın, **● Kaydı başlat**'a basın.
 2. Açılan tarayıcıda işlemlerinizi yapın. Sağ alttaki kırmızı **● KAYIT** etiketi kaydın sürdüğünü gösterir. Adımlar uygulamada canlı olarak listelenir.
 3. **■ Kaydı durdur**'a basın ya da tarayıcıyı kapatın. Senaryo otomatik olarak `Belgeler/WebAutomater/Scenarios` klasörüne kaydedilir ve soldaki listede görünür.
-4. Adımları düzenleyin: değeri değiştirin, bekleme süresini ayarlayın, bir adımı devre dışı bırakın, taşıyın, kopyalayın, silin ya da araya bekleme ekleyin. Değişiklikler otomatik kaydedilir.
+4. Adımları düzenleyin: değeri değiştirin, bekleme süresini ayarlayın, bir adımı devre dışı bırakın ya da silin. **+ Bekleme ekle** menüsünden sabit süre, bir yazı ya da bir öğe görünene kadar bekleme adımı ekleyin. Değişiklikler otomatik kaydedilir.
 5. Sağdaki **Oynatma** panelinden:
    - **Direkt oynat:** tekrar sayısını girin.
    - **Veri kaynağıyla oynat:** **Dosya seç...** ile Excel/CSV/JSON dosyasını seçin. Ardından adımların **Veri kolonu** sütununda hangi adıma hangi kolonun geleceğini seçin. Seçtiğiniz kolonun ilk satırdaki değeri adımın yanında "örn: Zeynep" diye görünür.
@@ -69,7 +69,8 @@ dotnet run --project src/WebAutomater.Cli -- <komut>    # geliştirirken
 | `wa columns kisiler.xlsx [--sheet Sayfa2]` | Veri kaynağının kolonlarını ve ilk satırlarını gösterir. |
 | `wa bind giris.wa.json --data kisiler.xlsx` | Adımları kolonlarla **etkileşimli** eşleştirir (listeden seçim). |
 | `wa bind giris.wa.json -s 3 -c isim` | 3. adımı `isim` kolonuna bağlar (`--clear` bağlantıyı kaldırır). |
-| `wa edit giris.wa.json -s 4 --delay 2000` | Bir adımın değerini (`--value`), bekleme süresini, etkinliğini (`--disable`/`--enable`) değiştirir ya da adımı siler (`--delete`). |
+| `wa edit giris.wa.json -s 4 --delay 2000` | Bir adımın değerini (`--value`), bekleme süresini, adıma özel zaman aşımını (`--timeout`), etkinliğini (`--disable`/`--enable`) değiştirir ya da adımı siler (`--delete`). |
+| `wa add-wait giris.wa.json --after 5 --text "Sipariş alındı"` | Bekleme adımı ekler: `--ms 2000` sabit süre, `--text` yazı görünene kadar, `--element 7` 7. adımın öğesi görünene kadar (`--timeout` ile en uzun süre). |
 | `wa play giris.wa.json -n 100` | 100 kez oynatır. |
 | `wa play giris.wa.json --data kisiler.csv` | Her satır için bir kez oynatır. |
 | `wa install [chromium\|firefox\|webkit]` | Tarayıcıyı indirir. |
@@ -84,6 +85,8 @@ Sık kullanılan `play` seçenekleri:
 --from 10 --to 20       Yalnızca 10-20. veri satırları
 --map 3=isim            Dosyayı değiştirmeden bu oynatma için adım-kolon eşleştirmesi
 --use-saved-data        "bind" ile hatırlanan veri kaynağını kullan
+--timeout 30000         Sayfa/öğe geç yüklenirse en fazla 30 sn bekle (varsayılan 15 sn)
+--retries 2             Hatalı tekrarı baştan en fazla 2 kez daha dene
 --keep-session          Tekrarlar arasında çerezleri koru (bir kez giriş yap, devam et)
 --stop-on-error         İlk hatada dur (varsayılan: sonraki tekrara geç)
 --type-delay 50         Metni tuş tuş yaz
@@ -110,6 +113,17 @@ Hangi adım bir kolona bağlanınca ne olur:
 | Sayfaya git / Dosya yükle / Tuşa bas | Adres, dosya yolu ya da tuş adı kolondan alınır. |
 
 **Şablonlar:** Bir adımın değerine `{{kolon}}` yazabilirsiniz, örneğin `Merhaba {{isim}}, kodunuz {{tekrar}}`. `{{tekrar}}` kaçıncı tekrarda olunduğunu, `{{satir}}` veri satır numarasını verir. Veri kaynağı olmadan direkt oynatmada da çalışır, örneğin `test{{tekrar}}@ornek.com`.
+
+## Yükleme süreleri değişken olduğunda
+
+Oynatma sabit süre beklemez, koşul bekler. Bir şey gelir gelmez devam eder, gelmezse zaman aşımına kadar bekler:
+
+- **Sayfaya git:** sayfa tamamen yüklenene kadar beklenir (en az 30 sn).
+- **Her öğe:** sayfada belirene, görünür, sabit ve tıklanabilir olana kadar beklenir. Üstünde "yükleniyor" katmanı varsa o kalkana kadar beklenir. Süre varsayılan 15 sn'dir; arayüzde **Yükleme beklemesi**, terminalde `--timeout` ile değiştirilir.
+- **Açılır listeler:** seçenek sonradan yükleniyorsa listeye eklenene kadar beklenir.
+- **Sayfa geçişleri:** kayıt sırasında bir tıklamadan hemen sonra yeni sayfa yüklendiyse adım işaretlenir. Arayüzde bu, adımın altında "ardından yeni sayfa beklenir" notu olarak görünür. Oynatmada o adımdan sonra yeni sayfa yüklenene kadar beklenir. Böylece site geçişi gecikmeyle başlatsa bile bir sonraki adım eski sayfada kalan benzer bir butona uygulanmaz. İşaretsiz adımlarda da tıklamanın hemen ardından başlayan geçiş yakalanır.
+- **Yazıyı bekle / Öğeyi bekle adımları:** sayfa görünüp verisi sonradan gelen durumlar için (ör. "Sonuçlar" tablosu). Bu adımlar varsayılan olarak 60 sn'ye kadar bekler.
+- **Yeniden deneme:** sunucu bir anlığına yanıt vermezse hatalı tekrar baştan yeniden denenir (arayüzde "Hata olursa N kez yeniden dene", terminalde `--retries`). Raporda her tekrarın kaçıncı denemede başarılı olduğu yazar.
 
 ## Senaryo dosyası
 

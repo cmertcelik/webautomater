@@ -43,6 +43,16 @@ public sealed class Step
 
     public string? FrameUrl { get; set; }
 
+    /// <summary>
+    /// Kayıt sırasında bu adımdan hemen sonra yeni bir sayfa yüklendiyse true.
+    /// Oynatmada adımdan sonra yeni sayfanın yüklenmesi beklenir; böylece bir sonraki adım
+    /// eski sayfada kalan benzer bir öğeye yanlışlıkla uygulanmaz.
+    /// </summary>
+    public bool WaitForNavigation { get; set; }
+
+    /// <summary>Bu adım için genel zaman aşımı yerine kullanılacak en uzun bekleme (ms).</summary>
+    public int? TimeoutMs { get; set; }
+
     /// <summary>Kullanıcının adıma eklediği serbest açıklama.</summary>
     public string? Note { get; set; }
 

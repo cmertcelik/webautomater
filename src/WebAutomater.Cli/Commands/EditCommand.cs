@@ -25,6 +25,10 @@ internal sealed class EditCommand : AsyncCommand<EditCommand.Settings>
         [Description("Adımdan önceki bekleme (ms).")]
         public int? Delay { get; init; }
 
+        [CommandOption("--timeout")]
+        [Description("Bu adım için en uzun bekleme (ms); 0 verilirse genel ayar kullanılır.")]
+        public int? Timeout { get; init; }
+
         [CommandOption("--disable")]
         [Description("Adımı oynatmada atla.")]
         public bool Disable { get; init; }
@@ -52,6 +56,8 @@ internal sealed class EditCommand : AsyncCommand<EditCommand.Settings>
         }
         if (settings.Delay is { } delay)
             step.DelayBeforeMs = Math.Max(0, delay);
+        if (settings.Timeout is { } timeout)
+            step.TimeoutMs = timeout > 0 ? timeout : null;
         if (settings.Disable)
             step.Enabled = false;
         if (settings.Enable)

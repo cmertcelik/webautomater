@@ -9,6 +9,7 @@ using WebAutomater.Core.Models;
 using WebAutomater.Core.Playback;
 using WebAutomater.Core.Recording;
 using WebAutomater.Core.Storage;
+using WebAutomater.Core.Text;
 
 namespace WebAutomater.Gui.ViewModels;
 
@@ -142,6 +143,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _limitLongDelays = true;
+
+    [ObservableProperty]
+    private decimal? _actionTimeoutSeconds = 15;
+
+    [ObservableProperty]
+    private decimal? _retryCount = 0;
 
     [ObservableProperty]
     private bool _headless;
@@ -549,9 +556,36 @@ public sealed partial class MainWindowViewModel : ObservableObject
         InsertStepAfter(SelectedStep, new Step { Type = StepType.Wait, Value = "1000" });
     }
 
-    private void InsertStepAfter(StepViewModel? anchor, Step step)
+    [RelayCommand]
+    private void AddWaitForTextStep()
     {
-        var index = anchor is null ? Steps.Count : Steps.IndexOf(anchor) + 1;
+        if (IsBusy)
+            return;
+        InsertStepAfter(SelectedStep, new Step { Type = StepType.WaitForText, Value = "", TimeoutMs = WaitStepTimeoutMs });
+        StatusText = "Eklenen adımın \"Değer\" kutusuna, sayfada görünmesini beklediğiniz yazıyı girin.";
+    }
+
+    [RelayCommand]
+    private void AddWaitForElementStep()
+    {
+        if (IsBusy)
+            return;
+        if (SelectedStep is not { Step.Selectors.Count: > 0 } selected)
+        {
+            StatusText = "Önce listeden beklenecek öğeye ait bir adımı (ör. bir tıklama) seçin.";
+            return;
+        }
+        InsertStepAt(Steps.IndexOf(selected), StepDescriber.WaitForElementOf(selected.Step, WaitStepTimeoutMs));
+    }
+
+    // Bekleme adımları yavaş işlemler için eklendiğinden genel zaman aşımından uzun süre tanınır.
+    private int WaitStepTimeoutMs => Math.Max(60_000, (int)((ActionTimeoutSeconds ?? 15) * 1000));
+
+    private void InsertStepAfter(StepViewModel? anchor, Step step) =>
+        InsertStepAt(anchor is null ? Steps.Count : Steps.IndexOf(anchor) + 1, step);
+
+    private void InsertStepAt(int index, Step step)
+    {
         Scenario.Steps.Insert(index, step);
         var vm = new StepViewModel(step, this);
         Steps.Insert(index, vm);
@@ -678,6 +712,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             SpeedFactor = SelectedSpeed.Factor,
             FixedDelayMs = SelectedSpeed.Fixed ? (int)((FixedDelaySeconds ?? 0) * 1000) : null,
             MaxDelayMs = LimitLongDelays ? 5000 : null,
+            ActionTimeoutMs = (int)((ActionTimeoutSeconds ?? 15) * 1000),
+            RetryCount = (int)(RetryCount ?? 0),
             ContinueOnError = ContinueOnError,
             FreshSessionPerIteration = FreshSession,
             TypeDelayMs = TypeSlowly ? 60 : 0,

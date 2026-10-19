@@ -18,6 +18,8 @@ public static class StepDescriber
         StepType.Upload => "Dosya yükle",
         StepType.Hover => "Üzerine gel",
         StepType.Wait => "Bekle",
+        StepType.WaitForText => "Yazıyı bekle",
+        StepType.WaitForElement => "Öğeyi bekle",
         _ => type.ToString(),
     };
 
@@ -46,7 +48,7 @@ public static class StepDescriber
     /// <summary>Örn: "Giriş Yap (buton)".</summary>
     public static string Target(Step step)
     {
-        if (step.Type is StepType.Navigate or StepType.Wait)
+        if (step.Type is StepType.Navigate or StepType.Wait or StepType.WaitForText)
             return "";
         if (step.Selectors.Count == 0 && string.IsNullOrEmpty(step.TargetName))
             return step.Type == StepType.Press ? "sayfa" : "";
@@ -65,7 +67,8 @@ public static class StepDescriber
             StepType.Fill when step.TargetKind == "password" => new string('•', Math.Min(Math.Max(value.Length, 4), 12)),
             StepType.Wait => int.TryParse(value, out var ms) ? $"{ms / 1000.0:0.#} sn" : value,
             StepType.Check or StepType.Uncheck when string.IsNullOrWhiteSpace(step.Parameter) => "",
-            StepType.Click or StepType.DoubleClick or StepType.Hover when string.IsNullOrWhiteSpace(step.Parameter) => "",
+            StepType.Click or StepType.DoubleClick or StepType.Hover or StepType.WaitForElement
+                when string.IsNullOrWhiteSpace(step.Parameter) => "",
             _ => value,
         };
     }
@@ -85,10 +88,24 @@ public static class StepDescriber
         return text;
     }
 
+    /// <summary>Bekleme adımı oluşturur: seçili adımın öğesi görünene kadar.</summary>
+    public static Step WaitForElementOf(Step target, int timeoutMs) => new()
+    {
+        Type = StepType.WaitForElement,
+        Selectors = [.. target.Selectors],
+        TargetName = target.TargetName,
+        TargetKind = target.TargetKind,
+        PageIndex = target.PageIndex,
+        FrameName = target.FrameName,
+        FrameUrl = target.FrameUrl,
+        TimeoutMs = timeoutMs,
+    };
+
     /// <summary>Hangi adım türlerinin veri kaynağına bağlanabileceği.</summary>
     public static bool IsParameterizable(StepType type) => type is
         StepType.Fill or StepType.Select or StepType.Check or StepType.Uncheck or StepType.Navigate
-        or StepType.Click or StepType.DoubleClick or StepType.Hover or StepType.Press or StepType.Upload;
+        or StepType.Click or StepType.DoubleClick or StepType.Hover or StepType.Press or StepType.Upload
+        or StepType.WaitForText;
 
     public static string ParameterHint(StepType type) => type switch
     {
@@ -99,6 +116,7 @@ public static class StepDescriber
         StepType.Navigate => "Bu kolondaki adrese gidilir.",
         StepType.Press => "Bu kolondaki tuşa basılır.",
         StepType.Upload => "Bu kolondaki dosya yolu yüklenir.",
+        StepType.WaitForText => "Bu kolondaki yazı sayfada görünene kadar beklenir.",
         _ => "",
     };
 }

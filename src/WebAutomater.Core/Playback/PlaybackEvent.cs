@@ -26,7 +26,8 @@ public sealed record IterationResult(
     int? FailedStepIndex,
     string? Error,
     TimeSpan Duration,
-    string? ScreenshotPath);
+    string? ScreenshotPath,
+    int Attempts = 1);
 
 public sealed class PlaybackResult
 {

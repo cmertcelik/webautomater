@@ -150,13 +150,20 @@
         <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,8">
           <TextBlock Text="Senaryo adı" VerticalAlignment="Center" Margin="0,0,10,0" FontWeight="SemiBold" />
           <TextBox Grid.Column="1" Text="{Binding ScenarioName}" IsEnabled="{Binding IsIdle}" />
-          <Button Grid.Column="2" Margin="10,0,0,0" Content="+ Bekleme ekle" Command="{Binding AddWaitStepCommand}"
-                  IsEnabled="{Binding IsIdle}" ToolTip.Tip="Seçili adımdan sonra bekleme adımı ekler" />
+          <Button Grid.Column="2" Margin="10,0,0,0" Content="+ Bekleme ekle ▾" IsEnabled="{Binding IsIdle}">
+            <Button.Flyout>
+              <MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuItem Header="Sabit süre bekle (seçili adımdan sonra)" Command="{Binding AddWaitStepCommand}" />
+                <MenuItem Header="Bir yazı görünene kadar bekle (seçili adımdan sonra)" Command="{Binding AddWaitForTextStepCommand}" />
+                <MenuItem Header="Seçili adımın öğesi görünene kadar bekle (adımdan önce)" Command="{Binding AddWaitForElementStepCommand}" />
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
         </Grid>
         <TextBlock DockPanel.Dock="Top" Text="{Binding FileText}" Classes="hint" Margin="0,0,0,8" />
 
         <!-- Sütun başlıkları; öğe şablonundaki genişliklerle aynı olmalı -->
-        <Grid DockPanel.Dock="Top" ColumnDefinitions="30,30,100,*,170,64,150,96" Margin="10,0,10,4">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="30,30,100,*,170,64,150,36" Margin="10,0,10,4">
           <TextBlock Grid.Column="1" Text="#" Classes="header" />
           <TextBlock Grid.Column="2" Text="İşlem" Classes="header" />
           <TextBlock Grid.Column="3" Text="Hedef" Classes="header" />
@@ -175,7 +182,7 @@
                         Classes.failed="{Binding IsFailed}"
                         Classes.disabled="{Binding !Enabled}"
                         ToolTip.Tip="{Binding Tooltip}">
-                  <Grid ColumnDefinitions="30,30,100,*,170,64,150,96" RowDefinitions="Auto,Auto">
+                  <Grid ColumnDefinitions="30,30,100,*,170,64,150,36" RowDefinitions="Auto,Auto">
                     <CheckBox IsChecked="{Binding Enabled}" ToolTip.Tip="İşaretli değilse oynatmada atlanır"
                               IsEnabled="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).IsIdle}" />
                     <TextBlock Grid.Column="1" Text="{Binding Number}" VerticalAlignment="Center" Opacity="0.6" />
@@ -204,9 +211,11 @@
                               IsEnabled="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).IsIdle}" />
                     <StackPanel Grid.Column="7" Orientation="Horizontal" HorizontalAlignment="Right"
                                 IsEnabled="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).IsIdle}">
+                      <!-- Şimdilik kullanılmıyor; tekrar açmak için yorumu kaldırın ve son sütun genişliğini 96 yapın.
                       <Button Classes="icon" Content="↑" Command="{Binding MoveUpCommand}" ToolTip.Tip="Yukarı taşı" />
                       <Button Classes="icon" Content="↓" Command="{Binding MoveDownCommand}" ToolTip.Tip="Aşağı taşı" />
                       <Button Classes="icon" Content="⧉" Command="{Binding DuplicateCommand}" ToolTip.Tip="Kopyala" />
+                      -->
                       <Button Classes="icon" Content="✕" Command="{Binding DeleteCommand}" ToolTip.Tip="Sil" />
                     </StackPanel>
                     <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="6" Text="{Binding Error}"
@@ -290,6 +299,19 @@
               <TextBlock Text="sn" VerticalAlignment="Center" />
             </StackPanel>
             <CheckBox Content="Uzun beklemeleri 5 sn ile sınırla" IsChecked="{Binding LimitLongDelays}" />
+
+            <TextBlock Text="Yükleme beklemesi" Classes="section" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="En fazla" VerticalAlignment="Center" />
+              <NumericUpDown Value="{Binding ActionTimeoutSeconds}" Minimum="1" Maximum="600" Increment="5" FormatString="0" Width="100" />
+              <TextBlock Text="sn bekle" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Classes="hint" Text="Sayfa ya da buton geç yüklenirse en fazla bu kadar beklenir; gelir gelmez devam edilir. Yavaş sitelerde artırın." />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+              <TextBlock Text="Hata olursa" VerticalAlignment="Center" />
+              <NumericUpDown Value="{Binding RetryCount}" Minimum="0" Maximum="10" FormatString="0" Width="90" />
+              <TextBlock Text="kez yeniden dene" VerticalAlignment="Center" />
+            </StackPanel>
 
             <TextBlock Text="Seçenekler" Classes="section" />
             <CheckBox Content="Tarayıcıyı gizle (arka planda çalış)" IsChecked="{Binding Headless}" />

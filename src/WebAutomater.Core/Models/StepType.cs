@@ -13,4 +13,6 @@ public enum StepType
     Upload,
     Hover,
     Wait,
+    WaitForText,
+    WaitForElement,
 }

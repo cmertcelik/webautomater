@@ -37,11 +37,14 @@ public static class ScenarioValidator
                 }
             }
 
-            var needsTarget = step.Type is not (StepType.Navigate or StepType.Wait or StepType.Press);
+            var needsTarget = step.Type is not (StepType.Navigate or StepType.Wait or StepType.Press or StepType.WaitForText);
             var clickByText = step.Type is StepType.Click or StepType.DoubleClick or StepType.Hover
                               && !string.IsNullOrWhiteSpace(step.Parameter);
             if (needsTarget && step.Selectors.Count == 0 && !clickByText)
                 problems.Add($"Adım {no}: hedef öğe seçicisi yok.");
+
+            if (step.Type == StepType.WaitForText && string.IsNullOrWhiteSpace(step.Value) && string.IsNullOrWhiteSpace(step.Parameter))
+                problems.Add($"Adım {no}: beklenecek yazı boş.");
 
             if (step.Type == StepType.Wait && !int.TryParse(step.Value, out _))
                 problems.Add($"Adım {no}: bekleme süresi milisaniye cinsinden sayı olmalı.");

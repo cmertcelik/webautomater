@@ -20,11 +20,12 @@ internal static class Shared
         for (var i = 0; i < scenario.Steps.Count; i++)
         {
             var s = scenario.Steps[i];
+            var flags = (s.WaitForNavigation ? " [grey]↪ sayfa[/]" : "") + (s.TimeoutMs is { } t ? $" [grey]≤{t / 1000.0:0.#}sn[/]" : "");
             var dim = s.Enabled ? "" : "[grey strikethrough]";
             var end = s.Enabled ? "" : "[/]";
             table.AddRow(
                 $"{dim}{i + 1}{end}",
-                $"{dim}{Markup.Escape(StepDescriber.Action(s.Type))}{end}",
+                $"{dim}{Markup.Escape(StepDescriber.Action(s.Type))}{end}{flags}",
                 $"{dim}{Markup.Escape(Truncate(StepDescriber.Target(s), 40))}{end}",
                 $"{dim}{Markup.Escape(Truncate(StepDescriber.Value(s), 40))}{end}",
                 $"{dim}{s.DelayBeforeMs / 1000.0:0.0} sn{end}",

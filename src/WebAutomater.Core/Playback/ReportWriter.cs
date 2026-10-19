@@ -9,12 +9,13 @@ public static class ReportWriter
     public static async Task WriteCsvAsync(PlaybackResult result, string path)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("tekrar;satir;durum;hatali_adim;hata;sure_sn;ekran_goruntusu");
+        sb.AppendLine("tekrar;satir;durum;deneme;hatali_adim;hata;sure_sn;ekran_goruntusu");
         foreach (var r in result.Iterations)
         {
             sb.Append(r.Iteration).Append(';')
               .Append(r.RowNumber?.ToString() ?? "").Append(';')
               .Append(r.Success ? "BASARILI" : "HATA").Append(';')
+              .Append(r.Attempts).Append(';')
               .Append(r.FailedStepIndex is { } i ? (i + 1).ToString() : "").Append(';')
               .Append(Escape(r.Error)).Append(';')
               .Append(r.Duration.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).Append(';')

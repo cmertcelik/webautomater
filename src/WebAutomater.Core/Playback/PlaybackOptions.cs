@@ -32,6 +32,9 @@ public sealed class PlaybackOptions
     /// <summary>Bir öğenin görünmesi/işlem yapılabilir olması için beklenecek en uzun süre.</summary>
     public int ActionTimeoutMs { get; set; } = 15_000;
 
+    /// <summary>Sayfa yüklemeleri için en uzun bekleme; zaman aşımı daha büyükse o kullanılır.</summary>
+    public int NavigationTimeoutMs => Math.Max(ActionTimeoutMs, 30_000);
+
     /// <summary>Bir tekrarda hata olursa sonraki tekrara geçilir; false ise oynatma durur.</summary>
     public bool ContinueOnError { get; set; } = true;
 
@@ -42,6 +45,9 @@ public sealed class PlaybackOptions
     public int TypeDelayMs { get; set; }
 
     public int DelayBetweenIterationsMs { get; set; }
+
+    /// <summary>Hatalı bir tekrar baştan kaç kez daha denensin (geçici ağ/sunucu aksaklıkları için).</summary>
+    public int RetryCount { get; set; }
 
     /// <summary>Hatalı adımda ekran görüntüsünün kaydedileceği klasör.</summary>
     public string? ScreenshotDirectory { get; set; }
