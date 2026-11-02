@@ -7,6 +7,8 @@ public enum PlaybackEventKind
     StepStarted,
     StepCompleted,
     StepFailed,
+    /// <summary>Adım hata verdi ama B planı bağlantısından devam ediliyor.</summary>
+    StepHandledError,
     IterationCompleted,
 }
 
@@ -17,7 +19,8 @@ public sealed record PlaybackEvent(
     int StepIndex = -1,
     int TotalSteps = 0,
     string? Message = null,
-    int? RowNumber = null);
+    int? RowNumber = null,
+    Models.StepPort? Port = null);
 
 public sealed record IterationResult(
     int Iteration,

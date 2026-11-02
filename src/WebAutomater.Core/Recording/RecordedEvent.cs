@@ -9,6 +9,7 @@ internal sealed class RecordedEvent
     public string? Display { get; set; }
     public string? Name { get; set; }
     public string? Kind { get; set; }
+    public string? Condition { get; set; }
     public bool Multiple { get; set; }
     public long Ts { get; set; }
     public int? Vw { get; set; }

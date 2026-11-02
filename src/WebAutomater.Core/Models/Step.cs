@@ -56,10 +56,35 @@ public sealed class Step
     /// <summary>Kullanıcının adıma eklediği serbest açıklama.</summary>
     public string? Note { get; set; }
 
+    /// <summary>Kontrol düğümünde neyin sınandığı; beklenen metin <see cref="Value"/> alanındadır.</summary>
+    public ConditionKind? Condition { get; set; }
+
+    /// <summary>Bitir düğümü: tekrar hatalı sayılsın mı.</summary>
+    public bool EndAsFailure { get; set; }
+
+    /// <summary>Normal devam (kontrol düğümünde "Evet"). Boşsa tekrar burada biter.</summary>
+    public Guid? Next { get; set; }
+
+    /// <summary>Kontrol düğümünde "Hayır" çıkışı.</summary>
+    public Guid? OnFalse { get; set; }
+
+    /// <summary>B planı: adım hata verirse devam edilecek düğüm.</summary>
+    public Guid? OnError { get; set; }
+
+    /// <summary>Akış ekranındaki konum.</summary>
+    public double? X { get; set; }
+
+    public double? Y { get; set; }
+
     public Step Clone()
     {
         var copy = (Step)MemberwiseClone();
         copy.Id = Guid.NewGuid();
+        copy.Next = null;
+        copy.OnFalse = null;
+        copy.OnError = null;
+        copy.X = null;
+        copy.Y = null;
         copy.Selectors = [.. Selectors];
         return copy;
     }

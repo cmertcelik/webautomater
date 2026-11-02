@@ -41,6 +41,12 @@ public sealed class PlaybackOptions
     /// <summary>Her tekrarda çerezleri/oturumu sıfırlamak için yeni tarayıcı bağlamı açılır.</summary>
     public bool FreshSessionPerIteration { get; set; } = true;
 
+    /// <summary>
+    /// Tarayıcı ve sayfa tekrarlar arasında kapanmaz. İlk tekrar baştan çalışır, sonrakiler döngü başlangıcından
+    /// devam eder. Sayfa başka bir adrese geçmişse ya da önceki tekrar hatalı bittiyse döngü sayfasına dönülür.
+    /// </summary>
+    public bool KeepPageOpen { get; set; }
+
     /// <summary>0'dan büyükse metinler tek tek tuşlanır (bazı siteler tuş olaylarını bekler).</summary>
     public int TypeDelayMs { get; set; }
 

@@ -73,6 +73,18 @@ public sealed class TestServer : IDisposable
         </body></html>
         """;
 
+    // Sayfa içi işlem yapılan ekran: adres değişmez. "kapali" sorgusu butonu pasif açar.
+    public const string FlowPageTemplate = """
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
+          <table><tr><td id="durum">Onaylandı</td><td>Ali Veli</td></tr></table>
+          <div>Toplam: <span id="sayac">0</span></div>
+          <button id="islem" DISABLED onclick="document.getElementById('sayac').textContent = +document.getElementById('sayac').textContent + 1">İşlem yap</button>
+          <button id="plan" onclick="location.href='/submit?yol=' + this.dataset.yol" data-yol="b">B planı</button>
+          <button id="plan2" onclick="location.href='/submit?yol=a'">A planı</button>
+          <input id="metin" value="">
+        </body></html>
+        """;
+
     private readonly HttpListener _listener = new();
     private int _flakyHits;
     private readonly CancellationTokenSource _cts = new();
@@ -91,6 +103,8 @@ public sealed class TestServer : IDisposable
     public int Wizard2DelayMs { get; set; } = 1500;
 
     public ConcurrentQueue<string> Submissions { get; } = new();
+
+    public ConcurrentDictionary<string, int> Hits { get; } = new();
 
     private async Task LoopAsync()
     {
@@ -114,8 +128,12 @@ public sealed class TestServer : IDisposable
         {
             var path = ctx.Request.Url!.AbsolutePath;
             string body;
+            Hits.AddOrUpdate(path, 1, (_, n) => n + 1);
             switch (path)
             {
+                case "/flow":
+                    body = FlowPageTemplate.Replace("DISABLED", ctx.Request.QueryString["kapali"] is null ? "" : "disabled");
+                    break;
                 case "/submit":
                     Submissions.Enqueue(WebUtility.UrlDecode(ctx.Request.Url.Query.TrimStart('?')));
                     body = "<html><body>ok</body></html>";

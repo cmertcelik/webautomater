@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using WebAutomater.Core.Models;
 using WebAutomater.Core.Storage;
 
 namespace WebAutomater.Cli.Commands;
@@ -48,7 +49,7 @@ internal sealed class EditCommand : AsyncCommand<EditCommand.Settings>
         var step = Shared.GetStep(scenario, settings.Step);
 
         if (settings.Delete)
-            scenario.Steps.Remove(step);
+            ScenarioGraph.Remove(scenario, step);
         if (settings.Value is not null)
         {
             step.Value = settings.Value;

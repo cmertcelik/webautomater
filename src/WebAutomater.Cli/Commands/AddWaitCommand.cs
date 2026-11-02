@@ -45,26 +45,24 @@ internal sealed class AddWaitCommand : AsyncCommand<AddWaitCommand.Settings>
 
         var scenario = await ScenarioStore.LoadAsync(settings.Scenario, ct);
         Step step;
-        int index;
         if (settings.Element is { } number)
         {
             var target = Shared.GetStep(scenario, number);
             if (target.Selectors.Count == 0)
                 return Shared.Error($"{number}. adımın bir öğesi yok.");
             step = StepDescriber.WaitForElementOf(target, settings.Timeout);
-            index = number - 1;
+            ScenarioGraph.InsertBefore(scenario, target, step);
         }
         else
         {
             step = settings.Text is not null
                 ? new Step { Type = StepType.WaitForText, Value = settings.Text, TimeoutMs = settings.Timeout }
                 : new Step { Type = StepType.Wait, Value = settings.Milliseconds!.Value.ToString() };
-            if (settings.After is { } after)
-                Shared.GetStep(scenario, after);
-            index = settings.After ?? scenario.Steps.Count;
+            var anchor = settings.After is { } after ? Shared.GetStep(scenario, after) : null;
+            ScenarioGraph.InsertAfter(scenario, anchor, step);
         }
 
-        scenario.Steps.Insert(index, step);
+        var index = scenario.Steps.IndexOf(step);
         await ScenarioStore.SaveAsync(scenario, settings.Scenario, ct);
         Shared.PrintSteps(scenario);
         AnsiConsole.MarkupLine($"[green]{index + 1}. adım olarak eklendi.[/]");

@@ -20,8 +20,26 @@ public static class StepDescriber
         StepType.Wait => "Bekle",
         StepType.WaitForText => "Yazıyı bekle",
         StepType.WaitForElement => "Öğeyi bekle",
+        StepType.Condition => "Kontrol",
+        StepType.End => "Bitir",
         _ => type.ToString(),
     };
+
+    public static string ConditionText(ConditionKind kind) => kind switch
+    {
+        ConditionKind.Visible => "Görünüyor mu",
+        ConditionKind.Enabled => "Aktif mi",
+        ConditionKind.Disabled => "Pasif mi",
+        ConditionKind.Checked => "İşaretli mi",
+        ConditionKind.Unchecked => "İşaretsiz mi",
+        ConditionKind.TextEquals => "Metni şuna eşit mi",
+        ConditionKind.TextContains => "Metni şunu içeriyor mu",
+        ConditionKind.PageHasText => "Sayfada bu yazı var mı",
+        _ => kind.ToString(),
+    };
+
+    public static bool ConditionUsesText(ConditionKind? kind) =>
+        kind is ConditionKind.TextEquals or ConditionKind.TextContains or ConditionKind.PageHasText;
 
     public static string Kind(string? kind) => kind switch
     {
@@ -48,7 +66,8 @@ public static class StepDescriber
     /// <summary>Örn: "Giriş Yap (buton)".</summary>
     public static string Target(Step step)
     {
-        if (step.Type is StepType.Navigate or StepType.Wait or StepType.WaitForText)
+        if (step.Type is StepType.Navigate or StepType.Wait or StepType.WaitForText or StepType.End
+            || step.Condition == ConditionKind.PageHasText)
             return "";
         if (step.Selectors.Count == 0 && string.IsNullOrEmpty(step.TargetName))
             return step.Type == StepType.Press ? "sayfa" : "";
@@ -67,6 +86,8 @@ public static class StepDescriber
             StepType.Fill when step.TargetKind == "password" => new string('•', Math.Min(Math.Max(value.Length, 4), 12)),
             StepType.Wait => int.TryParse(value, out var ms) ? $"{ms / 1000.0:0.#} sn" : value,
             StepType.Check or StepType.Uncheck when string.IsNullOrWhiteSpace(step.Parameter) => "",
+            StepType.Condition when !ConditionUsesText(step.Condition) => "",
+            StepType.End => "",
             StepType.Click or StepType.DoubleClick or StepType.Hover or StepType.WaitForElement
                 when string.IsNullOrWhiteSpace(step.Parameter) => "",
             _ => value,
@@ -75,6 +96,17 @@ public static class StepDescriber
 
     public static string Describe(Step step, string? resolved = null)
     {
+        if (step.Type == StepType.End)
+            return step.EndAsFailure ? "Bitir (hatalı say)" : "Bitir";
+        if (step.Type == StepType.Condition)
+        {
+            var kind = step.Condition ?? ConditionKind.Visible;
+            var subject = Target(step);
+            var question = ConditionText(kind);
+            var expected = ConditionUsesText(kind) ? $": \"{resolved ?? step.Value}\"" : "";
+            return $"Kontrol: {(subject.Length > 0 ? subject + " " : "")}{question}{expected}";
+        }
+
         var value = Value(step, resolved);
         if (step.Type is StepType.Click or StepType.DoubleClick or StepType.Hover && !string.IsNullOrWhiteSpace(step.Parameter))
             return $"{Action(step.Type)}: metni \"{value}\" olan öğe";
@@ -105,7 +137,7 @@ public static class StepDescriber
     public static bool IsParameterizable(StepType type) => type is
         StepType.Fill or StepType.Select or StepType.Check or StepType.Uncheck or StepType.Navigate
         or StepType.Click or StepType.DoubleClick or StepType.Hover or StepType.Press or StepType.Upload
-        or StepType.WaitForText;
+        or StepType.WaitForText or StepType.Condition;
 
     public static string ParameterHint(StepType type) => type switch
     {
@@ -117,6 +149,7 @@ public static class StepDescriber
         StepType.Press => "Bu kolondaki tuşa basılır.",
         StepType.Upload => "Bu kolondaki dosya yolu yüklenir.",
         StepType.WaitForText => "Bu kolondaki yazı sayfada görünene kadar beklenir.",
+        StepType.Condition => "Metin bu kolondaki değerle karşılaştırılır.",
         _ => "",
     };
 }

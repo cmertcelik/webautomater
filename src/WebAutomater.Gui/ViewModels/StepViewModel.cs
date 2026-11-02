@@ -6,7 +6,9 @@ using WebAutomater.Core.Text;
 
 namespace WebAutomater.Gui.ViewModels;
 
-public enum StepRunState { None, Running, Ok, Failed }
+public enum StepRunState { None, Running, Ok, Failed, No }
+
+public sealed record ConditionChoice(string Label, ConditionKind Kind);
 
 public sealed partial class StepViewModel : ObservableObject
 {
@@ -15,6 +17,11 @@ public sealed partial class StepViewModel : ObservableObject
     private static readonly IBrush InputBrush = Brush.Parse("#43A047");
     private static readonly IBrush ChoiceBrush = Brush.Parse("#8E24AA");
     private static readonly IBrush OtherBrush = Brush.Parse("#757575");
+    private static readonly IBrush ConditionBrush = Brush.Parse("#EF8E00");
+    private static readonly IBrush EndBrush = Brush.Parse("#37474F");
+
+    public static ConditionChoice[] ConditionChoices { get; } =
+        Enum.GetValues<ConditionKind>().Select(k => new ConditionChoice(StepDescriber.ConditionText(k), k)).ToArray();
 
     private readonly MainWindowViewModel _owner;
 
@@ -36,6 +43,76 @@ public sealed partial class StepViewModel : ObservableObject
     [ObservableProperty]
     private string? _error;
 
+    partial void OnStateChanged(StepRunState value) => _owner.NotifyFlowChanged();
+
+    public bool IsCondition => Step.Type == StepType.Condition;
+
+    public bool IsEnd => Step.Type == StepType.End;
+
+    public ConditionChoice? SelectedCondition
+    {
+        get => ConditionChoices.FirstOrDefault(c => c.Kind == (Step.Condition ?? ConditionKind.Visible));
+        set
+        {
+            if (value is null || value.Kind == Step.Condition)
+                return;
+            Step.Condition = value.Kind;
+            OnPropertyChanged(string.Empty);
+            _owner.MarkChanged();
+        }
+    }
+
+    public bool EndAsFailure
+    {
+        get => Step.EndAsFailure;
+        set
+        {
+            if (SetProperty(Step.EndAsFailure, value, Step, (s, v) => s.EndAsFailure = v))
+                _owner.MarkChanged();
+        }
+    }
+
+    /// <summary>Adıma özel en uzun bekleme; boş bırakılırsa genel ayar (kontrolde 3 sn) geçerlidir.</summary>
+    public decimal? TimeoutSeconds
+    {
+        get => Step.TimeoutMs / 1000m;
+        set
+        {
+            int? ms = value is { } v && v > 0 ? (int)Math.Round(v * 1000) : null;
+            if (SetProperty(Step.TimeoutMs, ms, Step, (s, x) => s.TimeoutMs = x))
+                _owner.MarkChanged();
+        }
+    }
+
+    public bool HasTimeout => !IsEnd && Step.Type is not (StepType.Wait or StepType.Navigate);
+
+    /// <summary>Düğüm kartındaki alt satır: ne ile çalıştığı. Şifreler maskeli.</summary>
+    public string FlowDetail
+    {
+        get
+        {
+            if (IsEnd)
+                return Step.EndAsFailure ? "hatalı say" : "";
+            if (IsCondition)
+            {
+                var text = StepDescriber.ConditionText(Step.Condition ?? ConditionKind.Visible);
+                var value = StepDescriber.Value(Step);
+                return value.Length > 0 ? $"{text}: {value}" : text + "?";
+            }
+
+            return StepDescriber.Value(Step);
+        }
+    }
+
+    public bool CanRecordNext => CanRecordFrom(StepPort.Next);
+    public bool CanRecordFalse => IsCondition && CanRecordFrom(StepPort.False);
+    public bool CanRecordError => ScenarioGraph.PortsOf(Step).Contains(StepPort.Error) && CanRecordFrom(StepPort.Error);
+    public string RecordNextText => IsCondition ? "Evet çıkışından kaydet" : "Sonrasından kaydet";
+
+    private bool CanRecordFrom(StepPort port) => !IsEnd && ScenarioGraph.GetLink(Step, port) is null;
+
+    public bool IsNo => State == StepRunState.No;
+
     public bool IsRunning => State == StepRunState.Running;
     public bool IsOk => State == StepRunState.Ok;
     public bool IsFailed => State == StepRunState.Failed;
@@ -44,7 +121,8 @@ public sealed partial class StepViewModel : ObservableObject
 
     public string TargetName => Step.Type switch
     {
-        StepType.Navigate or StepType.Wait or StepType.WaitForText => "",
+        StepType.Navigate or StepType.Wait or StepType.WaitForText or StepType.End => "",
+        StepType.Condition when Step.Condition == ConditionKind.PageHasText => "Sayfa",
         StepType.Press when Step.Selectors.Count == 0 => "sayfa",
         _ => string.IsNullOrWhiteSpace(Step.TargetName) ? Step.Selectors.FirstOrDefault() ?? "" : Step.TargetName,
     };
@@ -54,7 +132,7 @@ public sealed partial class StepViewModel : ObservableObject
         get
         {
             var parts = new List<string>();
-            if (Step.Type is not (StepType.Navigate or StepType.Wait or StepType.WaitForText) && Step.Selectors.Count > 0)
+            if (Step.Type is not (StepType.Navigate or StepType.Wait or StepType.WaitForText or StepType.End) && Step.Selectors.Count > 0)
                 parts.Add(StepDescriber.Kind(Step.TargetKind));
             if (Step.WaitForNavigation)
                 parts.Add("ardından yeni sayfa beklenir");
@@ -70,6 +148,8 @@ public sealed partial class StepViewModel : ObservableObject
         StepType.Click or StepType.DoubleClick or StepType.Hover => ClickBrush,
         StepType.Fill or StepType.Press or StepType.Upload => InputBrush,
         StepType.Select or StepType.Check or StepType.Uncheck => ChoiceBrush,
+        StepType.Condition => ConditionBrush,
+        StepType.End => EndBrush,
         _ => OtherBrush,
     };
 
@@ -94,7 +174,8 @@ public sealed partial class StepViewModel : ObservableObject
     }
 
     public bool HasValue => Step.Type is StepType.Navigate or StepType.Fill or StepType.Select
-        or StepType.Press or StepType.Upload or StepType.Wait or StepType.WaitForText;
+        or StepType.Press or StepType.Upload or StepType.Wait or StepType.WaitForText
+        || (IsCondition && StepDescriber.ConditionUsesText(Step.Condition));
 
     public bool IsValueEditable => HasValue && !IsBound;
 
@@ -106,6 +187,7 @@ public sealed partial class StepViewModel : ObservableObject
         StepType.Wait => "milisaniye",
         StepType.Upload => "tam dosya yolu",
         StepType.WaitForText => "beklenecek yazı",
+        StepType.Condition => "aranan metin",
         _ => "",
     };
 
@@ -134,7 +216,7 @@ public sealed partial class StepViewModel : ObservableObject
         }
     }
 
-    public bool CanBind => StepDescriber.IsParameterizable(Step.Type);
+    public bool CanBind => StepDescriber.IsParameterizable(Step.Type) && (!IsCondition || HasValue);
 
     public bool IsBound => !string.IsNullOrWhiteSpace(Step.Parameter);
 
@@ -179,6 +261,21 @@ public sealed partial class StepViewModel : ObservableObject
 
     [RelayCommand]
     private void Delete() => _owner.DeleteStep(this);
+
+    [RelayCommand]
+    private void RecordFromNext() => _owner.StartBranchRecording(this, StepPort.Next);
+
+    [RelayCommand]
+    private void RecordFromFalse() => _owner.StartBranchRecording(this, StepPort.False);
+
+    [RelayCommand]
+    private void RecordFromError() => _owner.StartBranchRecording(this, StepPort.Error);
+
+    [RelayCommand]
+    private void MakeStart() => _owner.SetStart(this);
+
+    [RelayCommand]
+    private void MakeLoopStart() => _owner.SetLoopStart(this);
 
     [RelayCommand]
     private void Duplicate() => _owner.DuplicateStep(this);

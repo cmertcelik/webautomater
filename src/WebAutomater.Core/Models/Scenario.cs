@@ -2,7 +2,7 @@ namespace WebAutomater.Core.Models;
 
 public sealed class Scenario
 {
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
 
     public int FormatVersion { get; set; } = CurrentFormatVersion;
 
@@ -15,6 +15,16 @@ public sealed class Scenario
     public BrowserSettings Browser { get; set; } = new();
 
     public List<Step> Steps { get; set; } = [];
+
+    /// <summary>
+    /// true: adımlar <see cref="Step.Next"/> vb. bağlantılarla ilerler. false: eski biçim, listedeki sırayla.
+    /// </summary>
+    public bool Graph { get; set; }
+
+    public Guid? StartStepId { get; set; }
+
+    /// <summary>"Sayfayı açık tut" oynatmasında sonraki tekrarların başladığı düğüm. Boşsa otomatik belirlenir.</summary>
+    public Guid? LoopStartStepId { get; set; }
 
     /// <summary>Son kullanılan veri kaynağı; arayüzde kolaylık için hatırlanır.</summary>
     public string? DataSourcePath { get; set; }

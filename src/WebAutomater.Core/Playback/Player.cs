@@ -15,7 +15,34 @@ public sealed class Player
     // Birden çok eşleşme bu süre boyunca sürerse ilk görünen öğe kullanılır.
     private const int AmbiguityGraceMs = 1500;
 
+    // Kontrol düğümünde durum bu süre içinde sağlanmazsa "Hayır" sayılır. Adıma özel süre verilebilir.
+    private const int DefaultConditionTimeoutMs = 3000;
+    // Bağlantılar döngü kurabilir ("hata varsa başa dön"); çıkışsız döngü oynatmayı sonsuza dek kilitlemesin.
+    private const int MaxStepVisitsPerIteration = 5000;
+
     private sealed record PlanItem(int Iteration, int? RowNumber, IReadOnlyDictionary<string, string>? Row);
+
+    /// <summary>Tekrarlar arasında korunabilen tarayıcı durumu.</summary>
+    private sealed class Session(IBrowserContext context)
+    {
+        public IBrowserContext Context { get; } = context;
+        public List<IPage> Pages { get; } = [];
+
+        /// <summary>Döngü başlangıcına ulaşıldı: sonraki tekrarlar oradan sürebilir.</summary>
+        public bool LoopReady { get; set; }
+        public string? LoopUrl { get; set; }
+        public int LoopPageIndex { get; set; }
+        public bool LastFailed { get; set; }
+
+        public void Track(IPage page)
+        {
+            lock (Pages)
+            {
+                if (!Pages.Contains(page))
+                    Pages.Add(page);
+            }
+        }
+    }
 
     public async Task<PlaybackResult> RunAsync(
         Scenario scenario, PlaybackOptions options, Action<PlaybackEvent>? onEvent = null, CancellationToken ct = default)
@@ -36,7 +63,9 @@ public sealed class Player
         // Bekleyen Playwright çağrıları iptal belirteci almadığından, iptalde tarayıcı kapatılarak sonlandırılır.
         await using var registration = ct.Register(() => _ = browser.CloseAsync());
 
-        IBrowserContext? sharedContext = null;
+        var flow = new ScenarioFlow(scenario);
+        Session? shared = null;
+        var fresh = options.FreshSessionPerIteration && !options.KeepPageOpen;
         try
         {
             foreach (var item in plan)
@@ -50,14 +79,14 @@ public sealed class Player
                 {
                     attempt++;
                     Emit(new PlaybackEvent(PlaybackEventKind.IterationStarted, item.Iteration, total, RowNumber: item.RowNumber));
-                    var context = options.FreshSessionPerIteration
-                        ? await NewContextAsync(browser, scenario, options)
-                        : sharedContext ??= await NewContextAsync(browser, scenario, options);
+                    var session = fresh
+                        ? await NewSessionAsync(browser, scenario, options)
+                        : shared ??= await NewSessionAsync(browser, scenario, options);
 
-                    iteration = await RunIterationAsync(scenario, options, item, attempt, total, context, Emit, ct);
+                    iteration = await RunIterationAsync(flow, scenario, options, item, attempt, total, session, Emit, ct);
 
-                    if (options.FreshSessionPerIteration)
-                        await SafeCloseAsync(context);
+                    if (fresh)
+                        await SafeCloseAsync(session.Context);
                     if (iteration.Success || ct.IsCancellationRequested || attempt > options.RetryCount)
                         break;
                     Emit(new PlaybackEvent(PlaybackEventKind.Info, item.Iteration, total, RowNumber: item.RowNumber,
@@ -83,8 +112,8 @@ public sealed class Player
         }
         finally
         {
-            if (sharedContext is not null)
-                await SafeCloseAsync(sharedContext);
+            if (shared is not null)
+                await SafeCloseAsync(shared.Context);
         }
 
         result.Cancelled = ct.IsCancellationRequested;
@@ -114,6 +143,13 @@ public sealed class Player
         return plan;
     }
 
+    private static async Task<Session> NewSessionAsync(IBrowser browser, Scenario scenario, PlaybackOptions options)
+    {
+        var session = new Session(await NewContextAsync(browser, scenario, options));
+        session.Context.Page += (_, page) => session.Track(page);
+        return session;
+    }
+
     private static async Task<IBrowserContext> NewContextAsync(IBrowser browser, Scenario scenario, PlaybackOptions options)
     {
         var context = await browser.NewContextAsync(new BrowserNewContextOptions
@@ -126,36 +162,79 @@ public sealed class Player
     }
 
     private async Task<IterationResult> RunIterationAsync(
-        Scenario scenario, PlaybackOptions options, PlanItem item, int attempt, int total, IBrowserContext context,
+        ScenarioFlow flow, Scenario scenario, PlaybackOptions options, PlanItem item, int attempt, int total, Session session,
         Action<PlaybackEvent> emit, CancellationToken ct)
     {
         var watch = Stopwatch.StartNew();
-        var pages = new List<IPage>();
-        void Track(IPage p)
+        var pages = session.Pages;
+        var stepCount = scenario.Steps.Count;
+
+        IterationResult Finish(bool success, int? stepIndex, string? error, string? shot = null)
         {
-            lock (pages)
-                if (!pages.Contains(p))
-                    pages.Add(p);
+            session.LastFailed = !success;
+            return new IterationResult(item.Iteration, item.RowNumber, success, stepIndex, error, watch.Elapsed, shot);
         }
-        context.Page += (_, p) => Track(p);
 
-        // Paylaşılan oturumda önceki tekrarın sekmeleri kapatılır, tek temiz sekmeyle başlanır.
-        foreach (var old in context.Pages.ToList())
-            await old.CloseAsync();
-        Track(await context.NewPageAsync());
-
-        var steps = scenario.Steps;
-        var stepCount = steps.Count;
-        var firstStep = true;
-        for (var i = 0; i < stepCount; i++)
+        var loopStart = options.KeepPageOpen ? flow.LoopStart : null;
+        Step? current;
+        if (options.KeepPageOpen && session.LoopReady && HasOpenPage(session))
         {
-            var step = steps[i];
+            current = loopStart;
+            try
+            {
+                await ReturnToLoopPageAsync(session, emit, item, total);
+            }
+            catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
+            {
+                // Sayfaya dönülemediyse bir sonraki deneme her şeye baştan başlar.
+                session.LoopReady = false;
+                return Finish(false, null, "Döngü sayfasına dönülemedi: " + CleanMessage(ex));
+            }
+        }
+        else
+        {
+            // Paylaşılan oturumda önceki tekrarın sekmeleri kapatılır, tek temiz sekmeyle başlanır.
+            foreach (var old in session.Context.Pages.ToList())
+                await old.CloseAsync();
+            lock (pages)
+                pages.Clear();
+            session.LoopReady = false;
+            session.Track(await session.Context.NewPageAsync());
+            current = flow.Start;
+        }
+
+        var firstStep = true;
+        var visits = 0;
+        while (current is not null)
+        {
+            var step = current;
+            var i = flow.IndexOf(step);
+            if (++visits > MaxStepVisitsPerIteration)
+            {
+                var loopMessage = $"Senaryo bir döngüden çıkamadı ({MaxStepVisitsPerIteration} adım çalıştı). Bağlantıları kontrol edin.";
+                emit(new PlaybackEvent(PlaybackEventKind.StepFailed, item.Iteration, total, i, stepCount, loopMessage, item.RowNumber));
+                return Finish(false, i, loopMessage);
+            }
+
             if (!step.Enabled)
+            {
+                current = flow.Next(step, StepPort.Next);
                 continue;
+            }
 
             try
             {
                 ct.ThrowIfCancellationRequested();
+
+                if (step == loopStart && !session.LoopReady)
+                {
+                    // Döngü sayfası, başlangıç düğümü çalışmadan hemen önceki adrestir.
+                    var loopPage = await GetPageAsync(pages, step.PageIndex, options.ActionTimeoutMs, ct);
+                    session.LoopUrl = loopPage.Url;
+                    session.LoopPageIndex = step.PageIndex;
+                    session.LoopReady = true;
+                }
+
                 var delay = firstStep ? 0 : DelayFor(step, options);
                 firstStep = false;
                 if (delay > 0)
@@ -165,24 +244,242 @@ public sealed class Player
                 emit(new PlaybackEvent(PlaybackEventKind.StepStarted, item.Iteration, total, i, stepCount,
                     StepDescriber.Describe(step, value), item.RowNumber));
 
+                if (step.Type == StepType.End)
+                {
+                    emit(new PlaybackEvent(PlaybackEventKind.StepCompleted, item.Iteration, total, i, stepCount, RowNumber: item.RowNumber));
+                    return step.EndAsFailure
+                        ? Finish(false, i, "Senaryo \"Bitir (hatalı say)\" düğümünde sonlandı.")
+                        : Finish(true, null, null);
+                }
+
                 var page = await GetPageAsync(pages, step.PageIndex, options.ActionTimeoutMs, ct);
+
+                if (step.Type == StepType.Condition)
+                {
+                    var (passed, detail) = await EvaluateConditionAsync(page, step, value, item, ct);
+                    var port = passed ? StepPort.Next : StepPort.False;
+                    emit(new PlaybackEvent(PlaybackEventKind.Info, item.Iteration, total, i, stepCount,
+                        $"{StepDescriber.Describe(step, value)} → {(passed ? "Evet" : "Hayır")}{(detail is null ? "" : $" ({detail})")}", item.RowNumber));
+
+                    if (!passed && flow.Next(step, StepPort.False) is null)
+                    {
+                        // Hayır çıkışı bağlı değilse kullanıcı bu durumu düşünmemiştir: sessizce "başarılı" denmez.
+                        throw new StepFailedException($"Kontrol sağlanmadı: {StepDescriber.Describe(step, value)}{(detail is null ? "" : $" ({detail})")}");
+                    }
+
+                    emit(new PlaybackEvent(PlaybackEventKind.StepCompleted, item.Iteration, total, i, stepCount,
+                        passed ? "Evet" : "Hayır", item.RowNumber, port));
+                    current = flow.Next(step, port);
+                    continue;
+                }
+
                 await ExecuteAsync(page, step, value, item, options, msg =>
                     emit(new PlaybackEvent(PlaybackEventKind.Info, item.Iteration, total, i, stepCount, msg, item.RowNumber)), ct);
 
                 emit(new PlaybackEvent(PlaybackEventKind.StepCompleted, item.Iteration, total, i, stepCount, RowNumber: item.RowNumber));
+                current = flow.Next(step, StepPort.Next);
             }
             catch (Exception ex)
             {
                 var cancelled = ct.IsCancellationRequested;
                 var message = cancelled ? "İptal edildi" : CleanMessage(ex);
+
+                if (!cancelled && flow.Next(step, StepPort.Error) is { } planB)
+                {
+                    emit(new PlaybackEvent(PlaybackEventKind.StepHandledError, item.Iteration, total, i, stepCount, message, item.RowNumber, StepPort.Error));
+                    current = planB;
+                    continue;
+                }
+
                 string? shot = null;
                 if (!cancelled)
                     shot = await TryScreenshotAsync(pages, step.PageIndex, options, item.Iteration, attempt, i);
                 emit(new PlaybackEvent(PlaybackEventKind.StepFailed, item.Iteration, total, i, stepCount, message, item.RowNumber));
-                return new IterationResult(item.Iteration, item.RowNumber, false, i, message, watch.Elapsed, shot);
+                return Finish(false, i, message, shot);
             }
         }
-        return new IterationResult(item.Iteration, item.RowNumber, true, null, null, watch.Elapsed, null);
+
+        return Finish(true, null, null);
+    }
+
+    private static bool HasOpenPage(Session session)
+    {
+        lock (session.Pages)
+            return session.LoopPageIndex < session.Pages.Count && !session.Pages[session.LoopPageIndex].IsClosed;
+    }
+
+    private static async Task ReturnToLoopPageAsync(Session session, Action<PlaybackEvent> emit, PlanItem item, int total)
+    {
+        IPage page;
+        lock (session.Pages)
+            page = session.Pages[session.LoopPageIndex];
+
+        if (session.LoopUrl is null)
+            return;
+        // Hatalı tekrardan sonra sayfa yarım kalmış olabilir (açık pencere, dolu form): adres aynı olsa da yenilenir.
+        if (!session.LastFailed && page.Url == session.LoopUrl)
+            return;
+
+        emit(new PlaybackEvent(PlaybackEventKind.Info, item.Iteration, total, RowNumber: item.RowNumber,
+            Message: session.LastFailed ? "Önceki tekrar hatalı bitti, döngü sayfası yenileniyor." : "Döngü sayfasına dönülüyor."));
+        await page.GotoAsync(session.LoopUrl);
+    }
+
+    /// <summary>
+    /// Kontrol düğümünü sınar. Sayfa yüklenmesi sürüyor olabileceği için durum sağlanana kadar kısa süre yoklanır;
+    /// süre dolarsa sonuç "Hayır"dır. Öğenin bulunamaması hata değil, "Hayır" sonucudur.
+    /// </summary>
+    private static async Task<(bool Passed, string? Detail)> EvaluateConditionAsync(
+        IPage page, Step step, string? value, PlanItem item, CancellationToken ct)
+    {
+        var timeoutMs = step.TimeoutMs ?? DefaultConditionTimeoutMs;
+        var kind = step.Condition ?? ConditionKind.Visible;
+        var watch = Stopwatch.StartNew();
+        string? detail = null;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var frame = await GetFrameAsync(page, step, 0, ct);
+                bool passed;
+                (passed, detail) = await CheckOnceAsync(frame, step, kind, value, item);
+                if (passed)
+                    return (true, null);
+            }
+            catch (StepFailedException ex)
+            {
+                detail = ex.Message;
+            }
+            catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
+            {
+                // Sayfa o anda geçiş yapıyor olabilir; yeniden denenir.
+                detail = "sayfa hazır değil";
+            }
+
+            if (watch.ElapsedMilliseconds >= timeoutMs)
+                return (false, detail);
+            await Task.Delay(PollIntervalMs, ct);
+        }
+    }
+
+    private static async Task<(bool Passed, string? Detail)> CheckOnceAsync(
+        IFrame frame, Step step, ConditionKind kind, string? expected, PlanItem item)
+    {
+        const int probeMs = 1000;
+        if (kind == ConditionKind.PageHasText)
+        {
+            var count = await frame.GetByText(expected ?? "").Filter(new LocatorFilterOptions { Visible = true }).CountAsync();
+            return (count > 0, count > 0 ? null : "yazı sayfada yok");
+        }
+
+        ILocator? target = null;
+        foreach (var selector in step.Selectors)
+        {
+            var locator = frame.Locator(ValueResolver.ApplyTemplate(selector, item.Row, item.Iteration, item.RowNumber)!);
+            int found;
+            try
+            {
+                found = await locator.CountAsync();
+            }
+            catch (PlaywrightException)
+            {
+                continue; // Geçersiz seçici; sıradakine geç.
+            }
+            if (found == 0)
+                continue;
+            target = found == 1 ? locator : locator.First;
+            break;
+        }
+
+        if (target is null)
+            return (false, "öğe bulunamadı");
+
+        switch (kind)
+        {
+            case ConditionKind.Visible:
+                var visible = await target.IsVisibleAsync();
+                return (visible, visible ? null : "öğe görünmüyor");
+            case ConditionKind.Enabled:
+                var enabled = await target.IsEnabledAsync(new LocatorIsEnabledOptions { Timeout = probeMs });
+                return (enabled, enabled ? null : "öğe pasif");
+            case ConditionKind.Disabled:
+                var disabled = await target.IsDisabledAsync(new LocatorIsDisabledOptions { Timeout = probeMs });
+                return (disabled, disabled ? null : "öğe aktif");
+            case ConditionKind.Checked:
+                var ticked = await target.IsCheckedAsync(new LocatorIsCheckedOptions { Timeout = probeMs });
+                return (ticked, ticked ? null : "işaretli değil");
+            case ConditionKind.Unchecked:
+                var unticked = !await target.IsCheckedAsync(new LocatorIsCheckedOptions { Timeout = probeMs });
+                return (unticked, unticked ? null : "işaretli");
+            default:
+                var text = await target.EvaluateAsync<string>(ReadTextScript, null, new LocatorEvaluateOptions { Timeout = probeMs });
+                var passed = TextMatches(text, expected, kind);
+                return (passed, passed ? null : $"bulunan: \"{Normalize(text)}\"");
+        }
+    }
+
+    private const string ReadTextScript = """
+        el => {
+          if (el instanceof HTMLSelectElement) return Array.from(el.selectedOptions).map(o => o.label || o.textContent).join(', ');
+          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value;
+          return el.innerText ?? el.textContent ?? '';
+        }
+        """;
+
+    /// <summary>Boşluk farkları ve Türkçe kurallarıyla büyük/küçük harf farkı önemsenmez.</summary>
+    public static bool TextMatches(string? actual, string? expected, ConditionKind kind)
+    {
+        var compare = System.Globalization.CultureInfo.GetCultureInfo("tr-TR").CompareInfo;
+        var a = Normalize(actual);
+        var b = Normalize(expected);
+        return kind == ConditionKind.TextContains
+            ? compare.IndexOf(a, b, System.Globalization.CompareOptions.IgnoreCase) >= 0
+            : compare.Compare(a, b, System.Globalization.CompareOptions.IgnoreCase) == 0;
+    }
+
+    private static string Normalize(string? text) =>
+        string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>
+    /// Dal kaydı için: başlangıçtan bir düğüme giden yolu verilen sayfada, beklemesiz çalıştırır.
+    /// Kontrol ve bitir düğümleri atlanır. Yol "Hata" çıkışından geçiyorsa o adımın hatası beklenen durumdur.
+    /// </summary>
+    /// <returns>Yol tamamlandıysa null, değilse hata mesajı.</returns>
+    public async Task<string?> ReplayPathAsync(
+        IPage firstPage, IReadOnlyList<(Step Step, StepPort Port)> path, PlaybackOptions options, Action<string> info, CancellationToken ct = default)
+    {
+        var session = new Session(firstPage.Context);
+        session.Track(firstPage);
+        foreach (var existing in firstPage.Context.Pages)
+            session.Track(existing);
+        void OnPage(object? _, IPage page) => session.Track(page);
+        firstPage.Context.Page += OnPage;
+        try
+        {
+            var item = new PlanItem(1, null, null);
+            foreach (var (step, port) in path)
+            {
+                if (!step.Enabled || step.Type is StepType.Condition or StepType.End)
+                    continue;
+                try
+                {
+                    var page = await GetPageAsync(session.Pages, step.PageIndex, options.ActionTimeoutMs, ct);
+                    await ExecuteAsync(page, step, ValueResolver.Resolve(step, null, 1, null), item, options, info, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    if (port != StepPort.Error)
+                        return $"{StepDescriber.Describe(step)}: {CleanMessage(ex)}";
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            firstPage.Context.Page -= OnPage;
+        }
     }
 
     private static int DelayFor(Step step, PlaybackOptions options)

@@ -1,0 +1,473 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:WebAutomater.Gui.ViewModels"
+             xmlns:views="using:WebAutomater.Gui.Views"
+             x:Class="WebAutomater.Gui.Views.WebAutomationView"
+             x:DataType="vm:MainWindowViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Opacity" Value="0.7" />
+      <Setter Property="Margin" Value="0,12,0,6" />
+    </Style>
+    <Style Selector="TextBlock.hint">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Opacity" Value="0.65" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.header">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Opacity" Value="0.6" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.panel">
+      <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+      <Setter Property="Padding" Value="14" />
+    </Style>
+    <Style Selector="Border.step">
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="6,4" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Border.step.running">
+      <Setter Property="Background" Value="#332196F3" />
+    </Style>
+    <Style Selector="Border.step.ok">
+      <Setter Property="Background" Value="#1F43A047" />
+    </Style>
+    <Style Selector="Border.step.failed">
+      <Setter Property="Background" Value="#33E53935" />
+    </Style>
+    <Style Selector="Border.step.disabled">
+      <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <Style Selector="Button.icon">
+      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="MinWidth" Value="28" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.strip">
+      <Setter Property="Width" Value="28" />
+      <Setter Property="Padding" Value="0,10" />
+      <Setter Property="VerticalAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Top" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button.canvasZoom">
+      <Setter Property="Width" Value="34" />
+      <Setter Property="Height" Value="34" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#1E88E5" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.record">
+      <Setter Property="Background" Value="#D32F2F" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="ListBox.log > ListBoxItem">
+      <Setter Property="Padding" Value="4,1" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="ListBox.steps > ListBoxItem">
+      <Setter Property="Padding" Value="4,1" />
+    </Style>
+  </UserControl.Styles>
+
+  <DockPanel>
+
+    <!-- Üst çubuk: kayıt -->
+    <Border DockPanel.Dock="Top" Classes="panel" Padding="14,10">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" RowDefinitions="Auto,Auto">
+        <TextBlock Text="Adres" VerticalAlignment="Center" Margin="0,0,10,0" FontWeight="SemiBold" />
+        <TextBox Grid.Column="1" Text="{Binding RecordUrl}" Watermark="https://ornek.com"
+                 IsEnabled="{Binding IsIdle}" VerticalContentAlignment="Center" />
+        <ComboBox Grid.Column="2" Margin="10,0,0,0" MinWidth="200"
+                  ItemsSource="{Binding Browsers}" SelectedItem="{Binding SelectedBrowser}"
+                  IsEnabled="{Binding IsIdle}" ToolTip.Tip="Kayıt ve oynatmada kullanılacak tarayıcı">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:BrowserChoice">
+              <TextBlock Text="{Binding Label}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <Button Grid.Column="3" Margin="10,0,0,0" Classes="record" Content="● Kaydı başlat"
+                Command="{Binding StartRecordingCommand}" IsVisible="{Binding !IsRecording}" />
+        <Button Grid.Column="3" Margin="10,0,0,0" Classes="record" Content="■ Kaydı durdur"
+                Command="{Binding StopRecordingCommand}" IsVisible="{Binding IsRecording}" />
+        <ToggleButton Grid.Column="4" Margin="10,0,0,0" Content="◎ Kontrol modu" IsChecked="{Binding IsCheckMode}"
+                      IsVisible="{Binding IsRecording}"
+                      ToolTip.Tip="Açıkken tarayıcıda tıkladığınız öğe işlem görmez; özellikleri okunur ve bir kontrol düğümü eklenir." />
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="5" Margin="0,8,0,0" Text="{Binding StatusText}" Classes="hint" />
+      </Grid>
+    </Border>
+
+    <!-- Alt: günlük -->
+    <Border DockPanel.Dock="Bottom" Classes="panel" Padding="14,6">
+      <DockPanel>
+        <DockPanel DockPanel.Dock="Top">
+          <Button DockPanel.Dock="Right" Classes="icon" Content="Temizle" Command="{Binding ClearLogCommand}" IsVisible="{Binding IsLogOpen}" />
+          <Button Name="LogToggle" Classes="icon" Content="{Binding LogToggleText}" Command="{Binding ToggleLogCommand}" FontWeight="SemiBold"
+                  ToolTip.Tip="Günlüğü aç/kapat" />
+        </DockPanel>
+        <ListBox Classes="log" Height="112" Margin="0,4,0,0" IsVisible="{Binding IsLogOpen}" ItemsSource="{Binding Log}" Background="Transparent" FontFamily="Menlo,Consolas,DejaVu Sans Mono,monospace" FontSize="12">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="x:String">
+              <SelectableTextBlock Text="{Binding}" TextWrapping="Wrap" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <Grid ColumnDefinitions="Auto,*,Auto">
+
+      <!-- Sol: senaryo kitaplığı -->
+      <Button Name="LibraryStrip" Grid.Column="0" Classes="strip" Command="{Binding ToggleLibraryCommand}" IsVisible="{Binding !IsLibraryOpen}" ToolTip.Tip="Senaryolarım panelini aç">
+        <StackPanel Spacing="8" HorizontalAlignment="Center">
+          <TextBlock Text="»" HorizontalAlignment="Center" />
+          <LayoutTransformControl HorizontalAlignment="Center">
+            <LayoutTransformControl.LayoutTransform>
+              <RotateTransform Angle="90" />
+            </LayoutTransformControl.LayoutTransform>
+            <TextBlock Text="Senaryolarım" FontWeight="SemiBold" FontSize="12" />
+          </LayoutTransformControl>
+        </StackPanel>
+      </Button>
+      <Border Classes="panel" Padding="10" Width="220" IsVisible="{Binding IsLibraryOpen}">
+        <DockPanel>
+          <DockPanel DockPanel.Dock="Top" Margin="4,0,0,6">
+            <Button Name="LibraryClose" DockPanel.Dock="Right" Classes="icon" Content="«" Command="{Binding ToggleLibraryCommand}" ToolTip.Tip="Paneli kapat" />
+            <TextBlock Text="Senaryolarım" Classes="section" Margin="0" VerticalAlignment="Center" />
+          </DockPanel>
+          <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,8,0,0">
+            <Button HorizontalAlignment="Stretch" Content="Yeni senaryo" Command="{Binding NewScenarioCommand}" IsEnabled="{Binding IsIdle}" />
+            <Button HorizontalAlignment="Stretch" Content="Dosyadan aç..." Command="{Binding OpenCommand}" IsEnabled="{Binding IsIdle}" />
+            <Button HorizontalAlignment="Stretch" Content="Farklı kaydet..." Command="{Binding SaveAsCommand}" IsEnabled="{Binding HasSteps}" />
+          </StackPanel>
+          <TextBlock DockPanel.Dock="Top" Classes="hint" Margin="4,0,4,8" IsVisible="{Binding !Library.Count}"
+                     Text="Kaydettiğiniz senaryolar burada listelenir." />
+          <ListBox ItemsSource="{Binding Library}" SelectedItem="{Binding SelectedLibraryItem}"
+                   IsEnabled="{Binding IsIdle}" Background="Transparent">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:ScenarioFile">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding ModifiedText}" Classes="hint" FontSize="11" />
+                  </StackPanel>
+                  <Button Grid.Column="1" Classes="icon" Content="✕" ToolTip.Tip="Senaryoyu sil"
+                          Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).DeleteScenarioCommand}"
+                          CommandParameter="{Binding}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+
+      <!-- Orta: adımlar -->
+      <DockPanel Grid.Column="1" Margin="12,10">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,8">
+          <TextBlock Text="Senaryo adı" VerticalAlignment="Center" Margin="0,0,10,0" FontWeight="SemiBold" />
+          <TextBox Grid.Column="1" Text="{Binding ScenarioName}" IsEnabled="{Binding IsIdle}" />
+          <StackPanel Grid.Column="2" Margin="10,0,0,0" Orientation="Horizontal" Spacing="6">
+          <RadioButton GroupName="flowView" Content="Akış" IsChecked="{Binding ShowFlow}" MinWidth="0" />
+          <RadioButton GroupName="flowView" Content="Liste" IsChecked="{Binding ShowList}" MinWidth="0" />
+          <Button Content="+ Kontrol" Command="{Binding AddConditionStepCommand}" IsEnabled="{Binding IsIdle}"
+                  ToolTip.Tip="Seçili düğümden sonra &quot;sayfada yazı var mı&quot; kontrolü ekler" />
+          <Button Content="+ Bitir" Command="{Binding AddEndStepCommand}" IsEnabled="{Binding IsIdle}"
+                  ToolTip.Tip="Tekrarı bu noktada bitiren düğüm" />
+          <Button Content="Düzenle" Command="{Binding ArrangeFlowCommand}" IsVisible="{Binding ShowFlow}"
+                  ToolTip.Tip="Düğümleri otomatik yerleştirir" />
+          <Button Content="+ Bekleme ekle ▾" IsEnabled="{Binding IsIdle}">
+            <Button.Flyout>
+              <MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuItem Header="Sabit süre bekle (seçili adımdan sonra)" Command="{Binding AddWaitStepCommand}" />
+                <MenuItem Header="Bir yazı görünene kadar bekle (seçili adımdan sonra)" Command="{Binding AddWaitForTextStepCommand}" />
+                <MenuItem Header="Seçili adımın öğesi görünene kadar bekle (adımdan önce)" Command="{Binding AddWaitForElementStepCommand}" />
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+          </StackPanel>
+        </Grid>
+        <TextBlock DockPanel.Dock="Top" Text="{Binding FileText}" Classes="hint" Margin="0,0,0,8" />
+
+        <!-- Sütun başlıkları; öğe şablonundaki genişliklerle aynı olmalı -->
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="30,30,100,*,170,64,150,36" Margin="10,0,10,4" IsVisible="{Binding ShowList}">
+          <TextBlock Grid.Column="1" Text="#" Classes="header" />
+          <TextBlock Grid.Column="2" Text="İşlem" Classes="header" />
+          <TextBlock Grid.Column="3" Text="Hedef" Classes="header" />
+          <TextBlock Grid.Column="4" Text="Değer" Classes="header" />
+          <TextBlock Grid.Column="5" Text="Önce bekle (sn)" Classes="header" TextWrapping="Wrap" />
+          <TextBlock Grid.Column="6" Text="Veri kolonu" Classes="header" Margin="6,0,0,0" />
+        </Grid>
+
+        <Panel>
+          <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding ShowFlow}">
+            <Border CornerRadius="4" ClipToBounds="True" BorderThickness="1" BorderBrush="#30808080">
+              <Panel>
+                <views:FlowCanvas Name="Flow" />
+                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10" Spacing="4">
+                  <Button Name="FlowZoomIn" Classes="canvasZoom" Content="+" ToolTip.Tip="Yakınlaştır" />
+                  <Button Name="FlowZoomOut" Classes="canvasZoom" Content="−" ToolTip.Tip="Uzaklaştır" />
+                </StackPanel>
+              </Panel>
+            </Border>
+            <Border Grid.Column="1" Width="270" Margin="8,0,0,0" Padding="10" CornerRadius="4" Classes="panel"
+                    IsVisible="{Binding SelectedStep, Converter={x:Static ObjectConverters.IsNotNull}}">
+              <ScrollViewer>
+                <StackPanel Spacing="6" DataContext="{Binding SelectedStep}" x:DataType="vm:StepViewModel"
+                            IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}">
+                  <Border Background="{Binding ActionBrush}" CornerRadius="4" Padding="8,3" HorizontalAlignment="Left">
+                    <TextBlock Text="{Binding ActionText}" Foreground="White" FontWeight="SemiBold" />
+                  </Border>
+                  <TextBlock Text="{Binding TargetName}" TextWrapping="Wrap" FontWeight="SemiBold"
+                             IsVisible="{Binding TargetName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                  <TextBlock Text="{Binding TargetKindText}" Classes="hint"
+                             IsVisible="{Binding TargetKindText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                  <TextBlock Text="{Binding Error}" Foreground="#E53935" TextWrapping="Wrap" FontSize="12" IsVisible="{Binding IsFailed}" />
+
+                  <CheckBox Content="Etkin (işaretsizse atlanır)" IsChecked="{Binding Enabled}" />
+
+                  <StackPanel Spacing="3" IsVisible="{Binding IsCondition}">
+                    <TextBlock Text="Ne kontrol edilsin" Classes="section" Margin="0,4,0,0" />
+                    <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:StepViewModel.ConditionChoices}" SelectedItem="{Binding SelectedCondition}">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ConditionChoice">
+                          <TextBlock Text="{Binding Label}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                  </StackPanel>
+
+                  <StackPanel Spacing="3" IsVisible="{Binding IsValueEditable}">
+                    <TextBlock Text="Değer" Classes="section" Margin="0,4,0,0" />
+                    <TextBox Text="{Binding EditableValue}" PasswordChar="{Binding PasswordChar}" Watermark="{Binding ValueWatermark}" TextWrapping="Wrap" />
+                  </StackPanel>
+
+                  <StackPanel Spacing="3" IsVisible="{Binding CanBind}">
+                    <TextBlock Text="Veri kolonu" Classes="section" Margin="0,4,0,0" />
+                    <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ColumnChoices}" SelectedItem="{Binding SelectedColumn}" ToolTip.Tip="{Binding BindingHint}" />
+                    <TextBlock Text="{Binding SampleText}" Classes="hint" IsVisible="{Binding IsBound}" />
+                  </StackPanel>
+
+                  <CheckBox Content="Tekrarı hatalı say" IsChecked="{Binding EndAsFailure}" IsVisible="{Binding IsEnd}" />
+
+                  <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0" IsVisible="{Binding !IsEnd}">
+                    <StackPanel Spacing="3">
+                      <TextBlock Text="Önce bekle (sn)" Classes="hint" />
+                      <NumericUpDown Value="{Binding DelaySeconds}" Minimum="0" Maximum="3600" Increment="0.5" FormatString="0.0" ShowButtonSpinner="False" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="3" IsVisible="{Binding HasTimeout}">
+                      <TextBlock Text="En fazla (sn)" Classes="hint" />
+                      <NumericUpDown Value="{Binding TimeoutSeconds}" Minimum="0" Maximum="3600" Increment="1" FormatString="0.#" ShowButtonSpinner="False"
+                                     Watermark="genel ayar" />
+                    </StackPanel>
+                  </Grid>
+
+                  <TextBlock Text="Bu noktadan dal kaydet" Classes="section" Margin="0,6,0,0" IsVisible="{Binding !IsEnd}" />
+                  <Button HorizontalAlignment="Stretch" Content="{Binding RecordNextText}" Command="{Binding RecordFromNextCommand}"
+                          IsVisible="{Binding CanRecordNext}" IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}" />
+                  <Button HorizontalAlignment="Stretch" Content="Hayır çıkışından kaydet" Command="{Binding RecordFromFalseCommand}"
+                          IsVisible="{Binding CanRecordFalse}" IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}" />
+                  <Button HorizontalAlignment="Stretch" Content="Hata çıkışından kaydet (B planı)" Command="{Binding RecordFromErrorCommand}"
+                          IsVisible="{Binding CanRecordError}" IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}" />
+                  <TextBlock Classes="hint" FontSize="11" IsVisible="{Binding !IsEnd}"
+                             Text="Tarayıcı açılır, başlangıçtan buraya kadar otomatik gidilir, sonra yaptıklarınız bu çıkışa bağlanır. Dolu çıkışlarda düğme görünmez." />
+
+                  <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,8,0,0" IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}">
+                    <Button Content="Başlangıç yap" Command="{Binding MakeStartCommand}" Padding="6,3" FontSize="12" />
+                    <Button Content="Döngü başı yap" Command="{Binding MakeLoopStartCommand}" Padding="6,3" FontSize="12"
+                            ToolTip.Tip="&quot;Sayfayı açık tut&quot; ile oynatırken sonraki tekrarlar buradan başlar" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button Content="Klonla" Command="{Binding DuplicateCommand}" Padding="6,3" FontSize="12"
+                            ToolTip.Tip="Düğümün bağlantısız bir kopyasını yanına ekler (Ctrl+D)" />
+                    <Button Content="Düğümü sil" Command="{Binding DeleteCommand}" Foreground="#E53935" Padding="6,3" FontSize="12" />
+                  </StackPanel>
+                </StackPanel>
+              </ScrollViewer>
+            </Border>
+          </Grid>
+          <ListBox Classes="steps" ItemsSource="{Binding Steps}" SelectedItem="{Binding SelectedStep}" IsVisible="{Binding ShowList}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:StepViewModel">
+                <Border Classes="step"
+                        Classes.running="{Binding IsRunning}"
+                        Classes.ok="{Binding IsOk}"
+                        Classes.failed="{Binding IsFailed}"
+                        Classes.disabled="{Binding !Enabled}"
+                        ToolTip.Tip="{Binding Tooltip}">
+                  <Grid ColumnDefinitions="30,30,100,*,170,64,150,36" RowDefinitions="Auto,Auto">
+                    <CheckBox IsChecked="{Binding Enabled}" ToolTip.Tip="İşaretli değilse oynatmada atlanır"
+                              IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}" />
+                    <TextBlock Grid.Column="1" Text="{Binding Number}" VerticalAlignment="Center" Opacity="0.6" />
+                    <Border Grid.Column="2" Background="{Binding ActionBrush}" CornerRadius="4" Padding="6,2"
+                            HorizontalAlignment="Left" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding ActionText}" Foreground="White" FontSize="12" FontWeight="SemiBold" />
+                    </Border>
+                    <StackPanel Grid.Column="3" VerticalAlignment="Center" Margin="0,0,8,0">
+                      <TextBlock Text="{Binding TargetName}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding TargetKindText}" Classes="hint" FontSize="11" IsVisible="{Binding TargetKindText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </StackPanel>
+                    <Panel Grid.Column="4" VerticalAlignment="Center">
+                      <TextBox Text="{Binding EditableValue}" IsVisible="{Binding IsValueEditable}"
+                               PasswordChar="{Binding PasswordChar}" Watermark="{Binding ValueWatermark}"
+                               IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}" />
+                      <TextBlock Text="{Binding SampleText}" IsVisible="{Binding IsBound}"
+                                 Foreground="#1E88E5" FontStyle="Italic" VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis" />
+                    </Panel>
+                    <NumericUpDown Grid.Column="5" Value="{Binding DelaySeconds}" Minimum="0" Maximum="3600"
+                                   Increment="0.5" FormatString="0.0" ShowButtonSpinner="False" Margin="4,0"
+                                   IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}" />
+                    <ComboBox Grid.Column="6" Margin="6,0,0,0" HorizontalAlignment="Stretch"
+                              ItemsSource="{Binding ColumnChoices}" SelectedItem="{Binding SelectedColumn}"
+                              IsVisible="{Binding CanBind}" ToolTip.Tip="{Binding BindingHint}"
+                              IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}" />
+                    <StackPanel Grid.Column="7" Orientation="Horizontal" HorizontalAlignment="Right"
+                                IsEnabled="{Binding $parent[UserControl].((vm:MainWindowViewModel)DataContext).IsIdle}">
+                      <!-- Şimdilik kullanılmıyor; tekrar açmak için yorumu kaldırın ve son sütun genişliğini 96 yapın.
+                      <Button Classes="icon" Content="↑" Command="{Binding MoveUpCommand}" ToolTip.Tip="Yukarı taşı" />
+                      <Button Classes="icon" Content="↓" Command="{Binding MoveDownCommand}" ToolTip.Tip="Aşağı taşı" />
+                      <Button Classes="icon" Content="⧉" Command="{Binding DuplicateCommand}" ToolTip.Tip="Kopyala" />
+                      -->
+                      <Button Classes="icon" Content="✕" Command="{Binding DeleteCommand}" ToolTip.Tip="Sil" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="6" Text="{Binding Error}"
+                               IsVisible="{Binding IsFailed}" Foreground="#E53935" FontSize="12"
+                               TextWrapping="Wrap" Margin="0,4,0,2" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel IsVisible="{Binding !HasSteps}" IsHitTestVisible="False" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="460" Spacing="8">
+            <TextBlock Text="Henüz adım yok" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock Classes="hint" TextAlignment="Center"
+                       Text="Üstteki adres kutusuna sitenin adresini yazın ve &quot;Kaydı başlat&quot;a basın. Açılan tarayıcıda yaptığınız tıklamalar, yazdığınız metinler ve seçimler burada adım adım listelenir." />
+          </StackPanel>
+        </Panel>
+      </DockPanel>
+
+      <!-- Sağ: oynatma -->
+      <Button Name="PlaybackStrip" Grid.Column="2" Classes="strip" Command="{Binding TogglePlaybackCommand}" IsVisible="{Binding !IsPlaybackOpen}" ToolTip.Tip="Oynatma panelini aç">
+        <StackPanel Spacing="8" HorizontalAlignment="Center">
+          <TextBlock Text="«" HorizontalAlignment="Center" />
+          <LayoutTransformControl HorizontalAlignment="Center">
+            <LayoutTransformControl.LayoutTransform>
+              <RotateTransform Angle="90" />
+            </LayoutTransformControl.LayoutTransform>
+            <TextBlock Text="Oynatma" FontWeight="SemiBold" FontSize="12" />
+          </LayoutTransformControl>
+        </StackPanel>
+      </Button>
+      <Border Grid.Column="2" Classes="panel" Width="320" IsVisible="{Binding IsPlaybackOpen}">
+        <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+          <Button Name="PlaybackClose" DockPanel.Dock="Right" Classes="icon" Content="»" Command="{Binding TogglePlaybackCommand}" ToolTip.Tip="Paneli kapat" />
+          <TextBlock Text="Oynatma" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+        </DockPanel>
+        <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,10,0,0">
+          <Grid ColumnDefinitions="*,8,*">
+            <Button Classes="primary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                    Content="▶ Oynat" Command="{Binding PlayCommand}" IsEnabled="{Binding HasSteps}" />
+            <Button Grid.Column="2" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                    Content="■ Durdur" Command="{Binding StopPlaybackCommand}" />
+          </Grid>
+          <ProgressBar Value="{Binding ProgressValue}" Maximum="{Binding ProgressMax}" Height="8" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Content="Raporu kaydet..." Command="{Binding SaveReportCommand}" />
+            <Button Content="Hata görüntüleri" Command="{Binding OpenErrorFolderCommand}" />
+          </StackPanel>
+        </StackPanel>
+        <ScrollViewer>
+          <StackPanel Spacing="6">
+            <RadioButton GroupName="mode" Content="Direkt oynat" IsChecked="{Binding UseDirect}" IsEnabled="{Binding IsIdle}" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="28,0,0,0" IsVisible="{Binding UseDirect}">
+              <NumericUpDown Value="{Binding RepeatCount}" Minimum="1" Maximum="1000000" Increment="1" FormatString="0" Width="130" />
+              <TextBlock Text="kez tekrarla" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <RadioButton GroupName="mode" Content="Veri kaynağıyla oynat" IsChecked="{Binding UseDataSource}" IsEnabled="{Binding IsIdle}" />
+            <StackPanel Spacing="6" Margin="28,0,0,0" IsVisible="{Binding UseDataSource}">
+              <TextBlock Classes="hint" Text="Her satır için senaryo bir kez oynatılır. Adımların &quot;Veri kolonu&quot; sütunundan hangi alana hangi kolonun yazılacağını seçin." />
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <Button Content="Dosya seç..." Command="{Binding ChooseDataSourceCommand}" IsEnabled="{Binding IsIdle}" />
+                <Button Content="Yenile" Command="{Binding ReloadDataSourceCommand}" IsVisible="{Binding HasData}" IsEnabled="{Binding IsIdle}" />
+                <Button Content="Kaldır" Command="{Binding ClearDataSourceCommand}" IsVisible="{Binding HasData}" IsEnabled="{Binding IsIdle}" />
+              </StackPanel>
+              <TextBlock Text="{Binding DataInfo}" Classes="hint" />
+              <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasMultipleSheets}">
+                <TextBlock Text="Sayfa" VerticalAlignment="Center" />
+                <ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" MinWidth="160" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding HasData}">
+                <TextBlock Text="Satır" VerticalAlignment="Center" />
+                <NumericUpDown Value="{Binding FirstRow}" Minimum="1" FormatString="0" Width="100" />
+                <TextBlock Text="–" VerticalAlignment="Center" />
+                <NumericUpDown Value="{Binding LastRow}" Minimum="1" FormatString="0" Width="100" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasData}">
+                <NumericUpDown Value="{Binding DataPasses}" Minimum="1" Maximum="10000" FormatString="0" Width="100" />
+                <TextBlock Text="tur" VerticalAlignment="Center" />
+              </StackPanel>
+            </StackPanel>
+
+            <TextBlock Text="Hız" Classes="section" />
+            <ComboBox ItemsSource="{Binding Speeds}" SelectedItem="{Binding SelectedSpeed}" HorizontalAlignment="Stretch">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:SpeedChoice">
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsFixedDelay}">
+              <TextBlock Text="Her adımdan önce" VerticalAlignment="Center" />
+              <NumericUpDown Value="{Binding FixedDelaySeconds}" Minimum="0" Maximum="600" Increment="0.5" FormatString="0.0" Width="100" />
+              <TextBlock Text="sn" VerticalAlignment="Center" />
+            </StackPanel>
+            <CheckBox Content="Uzun beklemeleri 5 sn ile sınırla" IsChecked="{Binding LimitLongDelays}" />
+
+            <TextBlock Text="Yükleme beklemesi" Classes="section" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="En fazla" VerticalAlignment="Center" />
+              <NumericUpDown Value="{Binding ActionTimeoutSeconds}" Minimum="1" Maximum="600" Increment="5" FormatString="0" Width="100" />
+              <TextBlock Text="sn bekle" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Classes="hint" Text="Sayfa ya da buton geç yüklenirse en fazla bu kadar beklenir; gelir gelmez devam edilir. Yavaş sitelerde artırın." />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+              <TextBlock Text="Hata olursa" VerticalAlignment="Center" />
+              <NumericUpDown Value="{Binding RetryCount}" Minimum="0" Maximum="10" FormatString="0" Width="90" />
+              <TextBlock Text="kez yeniden dene" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <TextBlock Text="Seçenekler" Classes="section" />
+            <CheckBox Content="Tarayıcıyı gizle (arka planda çalış)" IsChecked="{Binding Headless}" />
+            <CheckBox Content="Hata olursa sonraki tekrara geç" IsChecked="{Binding ContinueOnError}" />
+            <CheckBox Content="Sayfayı açık tut (yeniden açmadan tekrarla)" IsChecked="{Binding KeepPageOpen}"
+                      ToolTip.Tip="Tarayıcı kapanmaz. İlk tekrar baştan çalışır, sonrakiler döngü başı düğümünden (varsayılan: baştaki sayfaya gitme adımlarından sonrası) devam eder. Akış başka bir adreste biterse ya da tekrar hatalı biterse döngü sayfasına dönülür." />
+            <CheckBox Content="Her tekrarda oturumu sıfırla" IsChecked="{Binding FreshSession}" IsEnabled="{Binding !KeepPageOpen}"
+                      ToolTip.Tip="İşaretli değilse çerezler korunur (örneğin bir kez giriş yapıp devam etmek için)" />
+            <CheckBox Content="Metinleri tuş tuş yaz" IsChecked="{Binding TypeSlowly}"
+                      ToolTip.Tip="Bazı siteler metnin tek tek tuşlanmasını bekler" />
+
+          </StackPanel>
+        </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </DockPanel>
+</UserControl>

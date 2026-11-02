@@ -10,9 +10,12 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContextChanged += (_, _) =>
         {
-            if (DataContext is MainWindowViewModel vm)
-                vm.Host = this;
+            if (DataContext is ShellViewModel vm)
+            {
+                vm.Automation.Host = this;
+                vm.Documents.Host = this;
+            }
         };
-        Closing += (_, _) => (DataContext as MainWindowViewModel)?.Shutdown();
+        Closing += (_, _) => (DataContext as ShellViewModel)?.Shutdown();
     }
 }

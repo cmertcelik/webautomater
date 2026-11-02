@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>WebAutomater</AssemblyName>
     <RootNamespace>WebAutomater.Gui</RootNamespace>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>

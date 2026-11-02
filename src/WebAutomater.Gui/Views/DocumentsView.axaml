@@ -1,0 +1,226 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:WebAutomater.Gui.ViewModels"
+             xmlns:views="using:WebAutomater.Gui.Views"
+             x:Class="WebAutomater.Gui.Views.DocumentsView"
+             x:DataType="vm:DocumentsViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.title">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.hint">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Opacity" Value="0.65" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.excel-status">
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="Foreground" Value="#43A047" />
+    </Style>
+    <Style Selector="TextBlock.excel-status.error">
+      <Setter Property="Foreground" Value="#E53935" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Opacity" Value="0.75" />
+      <Setter Property="Margin" Value="0,8,0,3" />
+    </Style>
+    <Style Selector="Border.panel">
+      <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+      <Setter Property="Padding" Value="10" />
+    </Style>
+    <Style Selector="Button.small">
+      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="MinWidth" Value="30" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.chevron">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#1E88E5" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="ListBox.tree > ListBoxItem">
+      <Setter Property="Padding" Value="4,1" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="ListBox.ids > ListBoxItem">
+      <Setter Property="Padding" Value="6,3" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid ColumnDefinitions="270,5,*,5,240,5,290">
+
+    <!-- 1. Dosya ağacı -->
+    <Border Classes="panel">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
+          <TextBlock Text="Dosyalar" Classes="title" />
+          <Grid ColumnDefinitions="*,6,Auto">
+            <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Klasör seç..." Command="{Binding ChooseFolderCommand}" />
+            <Button Grid.Column="2" Content="Yenile" Command="{Binding RefreshTreeCommand}" IsEnabled="{Binding HasRoot}" />
+          </Grid>
+          <TextBlock Text="{Binding RootFolder}" Classes="hint" TextWrapping="NoWrap" TextTrimming="PathSegmentEllipsis"
+                     ToolTip.Tip="{Binding RootFolder}" IsVisible="{Binding HasRoot}" />
+          <TextBlock Text="{Binding TreeMessage}" Classes="hint" Foreground="#E53935"
+                     IsVisible="{Binding TreeMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+        <ListBox Name="Tree" Classes="tree" ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}"
+                 Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:FileNode">
+              <Grid ColumnDefinitions="Auto,20,20,*" Background="Transparent" ToolTip.Tip="{Binding FullPath}" Opacity="{Binding RowOpacity}">
+                <Border Width="0" Margin="{Binding Indent}" />
+                <Button Grid.Column="1" Classes="chevron" IsVisible="{Binding CanExpand}"
+                        Command="{Binding $parent[ListBox].((vm:DocumentsViewModel)DataContext).ToggleNodeCommand}"
+                        CommandParameter="{Binding}">
+                  <Path Data="M 3,1 L 7,5 L 3,9 Z" Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                        Width="10" Height="10" Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        RenderTransformOrigin="50%,50%">
+                    <Path.RenderTransform>
+                      <RotateTransform Angle="{Binding ChevronAngle}" />
+                    </Path.RenderTransform>
+                  </Path>
+                </Button>
+                <Path Grid.Column="2" IsVisible="{Binding IsDirectory}" Width="16" Height="13" Stretch="Uniform"
+                      Data="M 0,2 Q 0,0 2,0 L 6,0 L 8,2 L 14,2 Q 16,2 16,4 L 16,11 Q 16,13 14,13 L 2,13 Q 0,13 0,11 Z" Fill="#E0A82E" VerticalAlignment="Center" />
+                <Path Grid.Column="2" IsVisible="{Binding IsFile}" Width="12" Height="15" Stretch="Uniform"
+                      Data="M 0,0 L 8,0 L 12,4 L 12,15 L 0,15 Z" Fill="#90A4AE" VerticalAlignment="Center" />
+                <Path Grid.Column="2" IsVisible="{Binding IsPdf}" Width="12" Height="15" Stretch="Uniform"
+                      Data="M 0,0 L 8,0 L 12,4 L 12,15 L 0,15 Z" Fill="#D32F2F" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="3" Text="{Binding Name}" Margin="5,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <GridSplitter Grid.Column="1" Background="Transparent" ResizeDirection="Columns" />
+
+    <!-- 2. PDF görüntüleyici -->
+    <DockPanel Grid.Column="2">
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" Margin="4,6" IsEnabled="{Binding HasDocument}">
+        <Button Name="PrevPage" Classes="small" Content="‹" ToolTip.Tip="Önceki sayfa" />
+        <TextBox Name="PageBox" Grid.Column="1" Width="56" Margin="4,0" MinHeight="26" Padding="4,2"
+                 HorizontalContentAlignment="Center" VerticalContentAlignment="Center" ToolTip.Tip="Sayfa numarası yazıp Enter'a basın" />
+        <TextBlock Name="PageTotal" Grid.Column="2" VerticalAlignment="Center" Opacity="0.7" />
+        <Button Name="NextPage" Grid.Column="3" Classes="small" Margin="4,0,0,0" Content="›" ToolTip.Tip="Sonraki sayfa" />
+        <Button Name="ZoomOut" Grid.Column="5" Classes="small" Content="−" ToolTip.Tip="Uzaklaştır (Ctrl + tekerlek)" />
+        <TextBlock Grid.Column="6" Text="{Binding ZoomText}" Width="50" TextAlignment="Center" VerticalAlignment="Center" />
+        <Button Name="ZoomIn" Grid.Column="7" Classes="small" Content="+" ToolTip.Tip="Yakınlaştır (Ctrl + tekerlek)" />
+        <ToggleButton Grid.Column="8" Margin="6,0,0,0" Padding="8,3" Content="Sığdır" IsChecked="{Binding FitWidth}" ToolTip.Tip="Sayfayı alan genişliğine sığdır" />
+        <ToggleButton Grid.Column="9" Margin="6,0,0,0" Padding="8,3" Content="Vurgula" IsChecked="{Binding ShowHighlights}"
+                      ToolTip.Tip="Bulunan numaraları sayfada renklendir (yalnızca ekranda, PDF dosyası değişmez). Sarı: doğrulanmış, turuncu: doğrulanmamış." />
+      </Grid>
+      <Panel Background="#6B7075">
+        <ScrollViewer Name="PdfScroll" Focusable="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Visible"
+                      AllowAutoHide="False">
+          <views:PdfPagesView Name="Pages" Document="{Binding Document}" Zoom="{Binding Zoom}" FitWidth="{Binding FitWidth}"
+                              Highlights="{Binding Highlights}" ShowHighlights="{Binding ShowHighlights}" HideUnverified="{Binding OnlyValid}"
+                              HorizontalAlignment="Left" VerticalAlignment="Top" />
+        </ScrollViewer>
+        <TextBlock Text="{Binding ViewerMessage}" IsVisible="{Binding ShowViewerMessage}" Foreground="White"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380" />
+      </Panel>
+    </DockPanel>
+
+    <GridSplitter Grid.Column="3" Background="Transparent" ResizeDirection="Columns" />
+
+    <!-- 3. Bulunan numaralar -->
+    <Border Grid.Column="4" Classes="panel">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
+          <TextBlock Text="Bulunan Numaralar" Classes="title" />
+          <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Tümünü kopyala" Command="{Binding CopyAllCommand}" />
+          <CheckBox Content="Yalnızca doğrulananlar" IsChecked="{Binding OnlyValid}"
+                    ToolTip.Tip="Kontrol hanesi tutmayanları (telefon, belge numarası vb.) gizler" />
+          <TextBlock Text="{Binding ScanStatus}" Classes="hint" />
+          <TextBlock Text="{Binding ScanWarning}" Classes="hint" Foreground="#EF6C00" Opacity="1"
+                     IsVisible="{Binding ScanWarning, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+        <TextBlock DockPanel.Dock="Bottom" Classes="hint" Margin="0,6,0,0"
+                   Text="Ctrl ya da Shift ile seçip Ctrl+C ile kopyalayın. Çift tıklama o sayfaya gider." />
+        <ListBox Name="Identifiers" Classes="ids" ItemsSource="{Binding VisibleRows}" SelectionMode="Multiple" Background="Transparent"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:IdentifierRow">
+              <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" Background="Transparent">
+                <TextBlock Text="{Binding Value}" FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="14" />
+                <TextBlock Grid.Column="1" Text="✓" Foreground="#43A047" FontWeight="Bold" IsVisible="{Binding IsValid}" ToolTip.Tip="{Binding ValidityTip}" />
+                <TextBlock Grid.Column="1" Text="?" Foreground="#EF6C00" FontWeight="Bold" IsVisible="{Binding !IsValid}" ToolTip.Tip="{Binding ValidityTip}" />
+                <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="{Binding KindText}" Classes="hint" FontSize="11" />
+                  <TextBlock Text="{Binding PagesText}" Classes="hint" FontSize="11" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <GridSplitter Grid.Column="5" Background="Transparent" ResizeDirection="Columns" />
+
+    <!-- 4. Excel'e kaydet -->
+    <Border Grid.Column="6" Classes="panel">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,10,0,0">
+          <Button Classes="primary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                  Content="Excel'e kaydet" Command="{Binding SaveToExcelCommand}" />
+          <TextBlock Classes="hint excel-status" Classes.error="{Binding ExcelMessageIsError}" Text="{Binding ExcelMessage}"
+                     IsVisible="{Binding ExcelMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+        <ScrollViewer>
+          <StackPanel Margin="0,0,10,0">
+            <TextBlock Text="Excel'e Kaydet" Classes="title" />
+
+            <TextBlock Text="Excel dosyası" Classes="label" />
+            <TextBlock Text="{Binding ExcelFileName}" Classes="hint" ToolTip.Tip="{Binding ExcelPath}" Margin="0,0,0,4" />
+            <Grid ColumnDefinitions="*,6,*">
+              <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Seç..." Command="{Binding ChooseExcelCommand}" />
+              <Button Grid.Column="2" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Yeni..." Command="{Binding NewExcelCommand}" />
+            </Grid>
+
+            <TextBlock Text="PDF dosyasının tam yolu" Classes="label" />
+            <TextBox Text="{Binding OpenPdfPath, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Watermark="Açık PDF yok" />
+
+            <TextBlock Text="Belge tarihi" Classes="label" />
+            <Grid ColumnDefinitions="*,4,Auto">
+              <TextBox Text="{Binding DocumentDateText}" Watermark="31.12.2025" />
+              <Button Name="DateButton" Grid.Column="2" Content="▾" Padding="8,5" ToolTip.Tip="Takvimden seç">
+                <Button.Flyout>
+                  <Flyout Placement="BottomEdgeAlignedRight">
+                    <Calendar Name="DateCalendar" SelectedDate="{Binding PickedDate}" />
+                  </Flyout>
+                </Button.Flyout>
+              </Button>
+            </Grid>
+
+            <TextBlock Text="Belge konusu" Classes="label" />
+            <TextBox Text="{Binding DocumentSubject}" />
+
+            <TextBlock Text="Belge numarası" Classes="label" />
+            <TextBox Text="{Binding DocumentNumber}" />
+
+            <TextBlock Text="Destis numarası" Classes="label" />
+            <TextBox Text="{Binding DestisNumber}" />
+
+            <TextBlock Text="Açıklama" Classes="label" />
+            <TextBox Text="{Binding DocumentDescription}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" />
+          </StackPanel>
+        </ScrollViewer>
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>

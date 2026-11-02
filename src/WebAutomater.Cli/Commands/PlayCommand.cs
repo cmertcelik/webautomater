@@ -89,6 +89,10 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
         [Description("Tekrarlar arasında çerez/oturumu koru (ör. bir kez giriş yapıp devam etmek için).")]
         public bool KeepSession { get; init; }
 
+        [CommandOption("--keep-page")]
+        [Description("Sayfayı kapatmadan tekrarla: ilk tekrar baştan, sonrakiler döngü başlangıcından çalışır.")]
+        public bool KeepPage { get; init; }
+
         [CommandOption("--report")]
         [Description("Sonuçların yazılacağı CSV dosyası.")]
         public string? Report { get; init; }
@@ -142,6 +146,7 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
             RetryCount = Math.Max(0, settings.Retries),
             ContinueOnError = !settings.StopOnError,
             FreshSessionPerIteration = !settings.KeepSession,
+            KeepPageOpen = settings.KeepPage,
             ScreenshotDirectory = settings.Screenshots ?? Path.Combine(Environment.CurrentDirectory, "wa-hatalar"),
         };
 
@@ -174,6 +179,9 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
                 break;
             case PlaybackEventKind.StepFailed:
                 AnsiConsole.MarkupLine($"{prefix}{row} [red]✗ adım {e.StepIndex + 1}:[/] {Markup.Escape(e.Message ?? "")}");
+                break;
+            case PlaybackEventKind.StepHandledError:
+                AnsiConsole.MarkupLine($"{prefix}{row} [yellow]↷ adım {e.StepIndex + 1} hatalı, B planından devam:[/] {Markup.Escape(e.Message ?? "")}");
                 break;
             case PlaybackEventKind.IterationCompleted when e.Message == "Başarılı":
                 AnsiConsole.MarkupLine($"{prefix}{row} [green]✓[/]");

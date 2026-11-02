@@ -5,6 +5,8 @@ Web sitelerinde yapılan işlemleri (tıklama, yazma, açılır listeden seçim,
 - **Direkt oynatma:** senaryo 50 ya da 100 kez, istediğiniz kadar tekrarlanır.
 - **Veri kaynağıyla oynatma:** Excel, CSV veya JSON dosyasındaki her satır için senaryo bir kez oynatılır. Adımlar dosyadaki kolonlarla eşleştirilir; örneğin "Ad" alanına her seferinde `isim` kolonundaki değer yazılır.
 
+Masaüstü arayüzünde ayrıca **Belge Tarama** sekmesi var: PDF'leri görüntüler, içindeki T.C. kimlik ve vergi numaralarını bulur, belge bilgilerini Excel'e satır olarak ekler.
+
 Windows, Linux ve macOS'ta çalışır. Masaüstü arayüzü (teknik olmayan kullanıcılar için) ve terminal komutu (`wa`) var.
 
 ## Proje yapısı
@@ -17,6 +19,7 @@ src/
     Data/              Excel (.xlsx), CSV, JSON okuyucu
     Models/            Scenario, Step
     Text/              Adımları Türkçe okunabilir metne çeviren StepDescriber
+    Documents/         PDF (PDFium), numara bulma, Excel'e satır ekleme
   WebAutomater.Cli/    Terminal uygulaması: wa
   WebAutomater.Gui/    Avalonia masaüstü uygulaması: WebAutomater
 tests/
@@ -55,6 +58,25 @@ dotnet run --project src/WebAutomater.Gui
    - **Veri kaynağıyla oynat:** **Dosya seç...** ile Excel/CSV/JSON dosyasını seçin. Ardından adımların **Veri kolonu** sütununda hangi adıma hangi kolonun geleceğini seçin. Seçtiğiniz kolonun ilk satırdaki değeri adımın yanında "örn: Zeynep" diye görünür.
 6. **▶ Oynat**. Çalışan adım mavi, başarılı adım yeşil, hatalı adım kırmızı görünür. Hatanın nedeni adımın altında yazar. Bitince **Raporu kaydet...** ile sonuçları CSV olarak alabilir, **Hata görüntüleri** ile hata anındaki ekran görüntülerine bakabilirsiniz.
 
+## Belge Tarama sekmesi
+
+Soldan sağa dört panel vardır; aralarındaki çizgiler sürüklenerek genişlikler değiştirilebilir.
+
+1. **Dosyalar:** **Klasör seç...** ile klasörü seçin. Alt klasörler ok ya da çift tıklamayla açılır (klavyede sağ/sol ok, Enter). Seçilen klasör sonraki açılışta hatırlanır.
+2. **PDF görüntüleyici:** PDF'e tıklayınca açılır. Ctrl + tekerlek yakınlaştırır; **Sığdır** sayfayı alan genişliğine oturtur. PageUp/PageDown/Home/End çalışır.
+3. **Bulunan Numaralar:** 11 haneli sayılar T.C. kimlik, 10 haneli sayılar vergi numarası olarak listelenir. Aynı numara tek satırda, geçtiği sayfalarla birlikte görünür; çift tıklama o sayfaya gider.
+   - **✓** kontrol hanesi doğru, **?** hane sayısı uyuyor ama kontrol hanesi tutmuyor (telefon, belge numarası olabilir). **Yalnızca doğrulananlar** bunları gizler.
+   - Bulunan numaralar sayfada renklendirilir: sarı doğrulanmış, turuncu doğrulanmamış. Bu yalnızca ekrandaki görünümdür, PDF dosyası değişmez. Görüntüleyicideki **Vurgula** düğmesi kapatıp açar.
+   - **Tümünü kopyala** ya da seçip Ctrl+C. Numaralar alt alta kopyalanır, Excel'e yapıştırınca her biri ayrı satıra gelir. Excel baştaki sıfırı siler (`0123456789` gibi vergi numaraları); korumak için hedef sütunu önce Metin biçimine alın.
+4. **Excel'e Kaydet:** **Seç...** ile mevcut dosyayı ya da **Yeni...** ile yeni dosyayı belirleyin, alanları doldurup **Excel'e kaydet**'e basın. Satır ilk çalışma sayfasının sonuna eklenir. Sütun sırası: PDF yolu, belge tarihi, belge konusu, belge numarası, destis numarası, açıklama. Kayıttan sonra form temizlenir; hata olursa girilen bilgiler korunur.
+
+Sınırlar:
+
+- Numaralar PDF'in metin katmanından okunur. **Taranmış (görüntü) PDF'lerde numara bulunamaz** (OCR yok); uygulama bu durumda uyarı gösterir.
+- Parola korumalı PDF'ler açılamaz.
+- Excel dosyası Excel'de açıkken kayıt yapılamaz; dosyayı kapatıp yeniden deneyin. Yazma geçici dosya üzerinden yapıldığı için yarıda kalan kayıt dosyayı bozmaz.
+- Mevcut dosya ClosedXML ile yeniden yazılır. Dosyada grafik, makro, resim gibi özel içerik varsa kayıt için ayrı bir dosya kullanın.
+
 ## Terminal (`wa`)
 
 ```bash
@@ -88,6 +110,7 @@ Sık kullanılan `play` seçenekleri:
 --timeout 30000         Sayfa/öğe geç yüklenirse en fazla 30 sn bekle (varsayılan 15 sn)
 --retries 2             Hatalı tekrarı baştan en fazla 2 kez daha dene
 --keep-session          Tekrarlar arasında çerezleri koru (bir kez giriş yap, devam et)
+--keep-page             Sayfayı kapatmadan tekrarla (bkz. "Sayfayı açık tutarak tekrarlama")
 --stop-on-error         İlk hatada dur (varsayılan: sonraki tekrara geç)
 --type-delay 50         Metni tuş tuş yaz
 --report sonuc.csv      Her tekrarın sonucunu CSV'ye yaz
@@ -95,6 +118,38 @@ Sık kullanılan `play` seçenekleri:
 ```
 
 Çıkış kodu: tüm tekrarlar başarılıysa `0`, hata ya da iptal varsa `2`. Bu sayede zamanlanmış görevlerde ve CI'da kullanılabilir.
+
+## Akış: kontroller, dallar ve B planı
+
+Senaryo düğümlerden oluşur. Orta alandaki **Akış / Liste** seçimi iki görünüm arasında geçirir; eski senaryolar açıldığında düz bir zincir olarak görünür ve aynı şekilde çalışır.
+
+**Akış ekranında**
+
+- Daha geniş alan için **Senaryolarım**, **Oynatma** ve **Günlük** panellerini başlıklarındaki düğmeyle kapatın; akış ekranı kalan alana kendiliğinden yayılır. Kapalı yan panel kenarda ince bir şerit olarak kalır, tıklayınca açılır. Boş alana tıklamak seçimi kaldırır ve sağdaki özellik panelini de kapatır.
+- Sağ alttaki **+** ve **−** düğmeleri yakınlaştırıp uzaklaştırır.
+- Düğümü sürükleyin. Boş alanı sürüklemek ya da tekerlek ekranı kaydırır, Ctrl + tekerlek yakınlaştırır. **Düzenle** tümünü yeniden yerleştirir.
+- Bağlantı kurmak için bir düğümün çıkış noktasından başka bir düğümün üzerine sürükleyin. Bağlantıya tıklayıp Delete ile silin. Seçili düğüm de Delete ile silinir; gelen bağlantılar devamına aktarılır.
+- **Klonlama:** düğümü seçip sağ paneldeki **Klonla**'ya ya da Ctrl+D'ye basın. Kopya aynı hedef, değer ve ayarlarla yanına eklenir ama bağlantısı yoktur, mevcut akış değişmez. Değerini düzenleyip bir çıkıştan ona sürükleyin; devam edecekse kendi çıkışını da bağlayın, yoksa tekrar o düğümde biter.
+- Çıkışlar: alt nokta normal devamdır (kontrolde **Evet**), kontroldeki ikinci nokta **Hayır**, işlem düğümlerinin sağındaki kırmızı nokta **Hata** (B planı).
+- Çıkışı boş olan düğümde tekrar başarıyla biter. **+ Bitir** düğümü tekrarı açıkça bitirir; "Tekrarı hatalı say" ile hatalı sayılabilir.
+- Döngü kurulabilir (ör. hata varsa geri dön); bir tekrar içinde 5000 adımı geçerse tekrar hata ile durdurulur.
+
+**Kontrol modu.** Kayıt sırasında uygulamadaki **◎ Kontrol modu** düğmesine ya da tarayıcının sağ altındaki **◎ KONTROL**'e basın. Üzerine geldiğiniz öğe renklenir. Tıkladığınızda site tıklamayı almaz, işlem yapılmaz; açılan panelden kontrolü seçip **Kontrolü ekle** dersiniz: aktif mi, pasif mi, işaretli mi, görünüyor mu, metni eşit mi, metni içeriyor mu, bu yazı sayfada var mı. Sonra kayıt moduna kendiliğinden dönülür. Esc iptal eder. Beklenen metin `{{kolon}}` şablonu ya da **Veri kolonu** ile veri kaynağına bağlanabilir.
+
+**Kontrolün sonucu.** Metin karşılaştırmasında boşluk ve Türkçe büyük/küçük harf farkı önemsenmez. Durum en fazla 3 sn yoklanır (düğümde değiştirilebilir), sağlanmazsa sonuç Hayır'dır; öğenin bulunamaması da Hayır sayılır. **Hayır çıkışı bağlı değilse tekrar hatalı biter** ve neden sağlanmadığı günlüğe yazılır.
+
+**Dal kaydetme.** Bir düğümü seçip sağdaki panelden "Hayır çıkışından kaydet" ya da "Hata çıkışından kaydet"e basın. Tarayıcı açılır, başlangıçtan o düğüme kadar otomatik gidilir (kontroller sınanmadan, en kısa yoldan), sonra yaptığınız işlemler o çıkışa bağlanır.
+
+**B planı.** Bir işlem hata verir ve Hata çıkışı bağlıysa tekrar hatalı sayılmaz, o yoldan devam edilir. Düğümün **En fazla (sn)** süresini kısaltırsanız B planına daha çabuk geçilir. Sitenin gösterdiği hata mesajı için işlemden sonra bir kontrol düğümü koyun: işlem teknik olarak başarılı olduğundan Hata çıkışı bunu yakalamaz.
+
+## Sayfayı açık tutarak tekrarlama
+
+Oynatma panelinde **Sayfayı açık tut** (terminalde `--keep-page`) seçilince tarayıcı tekrarlar arasında kapanmaz:
+
+- İlk tekrar baştan çalışır (giriş yapma gibi hazırlıklar dahil), sonrakiler **döngü başı** düğümünden devam eder. Varsayılan döngü başı, baştaki "Sayfaya git" adımlarından sonraki ilk düğümdür; başka bir düğümü sağdaki panelden **Döngü başı yap** ile seçebilirsiniz. Akış ekranında döngü başı `↻` ile işaretlidir.
+- Akış, döngü başındaki adresten farklı bir adreste bittiyse sonraki tekrardan önce o adrese dönülür. Adres aynıysa sayfa yenilenmez.
+- Tekrar hatalı bittiyse sayfa yarım kalmış olabileceği için yenilenir. Sayfa kapanmışsa senaryo baştan başlar.
+- Bu seçenek açıkken çerezler de korunur.
 
 ## Veri kaynakları ve eşleştirme
 
@@ -168,6 +223,7 @@ macOS'ta imzasız uygulamayı ilk açışta Finder'da sağ tık → **Aç** deme
 ## Bilinen sınırlar
 
 - Dosya yükleme adımında tarayıcı dosyanın tam yolunu vermez, yalnızca adını verir. Kayıttan sonra adımın değerine tam dosya yolunu yazın.
+- Kontrol modunda pasif butonun yakalanması Chromium ile test edildi. Firefox ve WebKit'te pasif öğeler tıklama olayı üretmeyebilir; bu durumda "Sayfada yazı var mı" kontrolünü kullanın ya da Chromium ile kaydedin.
 - Sürükle-bırak, fare tekerleğiyle kaydırma, sağ tık ve çizim (canvas) işlemleri kaydedilmez. Playwright tıklamadan önce öğeyi kendisi görünür alana kaydırdığı için kaydırma çoğu zaman gerekmez.
 - Kayıt sırasında adres çubuğuna yazılan yeni adresler "Sayfaya git" adımı olur. Bir tıklamadan sonraki 2 sn içinde gerçekleşen sayfa geçişleri ise o tıklamanın sonucu sayılır ve ayrı adım olarak kaydedilmez.
 - CAPTCHA ve iki adımlı doğrulama içeren akışlar otomatikleştirilemez.

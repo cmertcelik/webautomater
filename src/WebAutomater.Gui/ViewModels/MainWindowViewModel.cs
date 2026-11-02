@@ -160,6 +160,53 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool _freshSession = true;
 
     [ObservableProperty]
+    private bool _keepPageOpen;
+
+    /// <summary>Orta alanda akış (düğümler) mı liste mi gösterilsin.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowList))]
+    private bool _showFlow = true;
+
+    public bool ShowList
+    {
+        get => !ShowFlow;
+        set => ShowFlow = !value;
+    }
+
+    [ObservableProperty]
+    private bool _isLibraryOpen = true;
+
+    [ObservableProperty]
+    private bool _isPlaybackOpen = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LogToggleText))]
+    private bool _isLogOpen = true;
+
+    public string LogToggleText => IsLogOpen ? "▾ Günlük" : "▸ Günlük";
+
+    [RelayCommand]
+    private void ToggleLibrary() => IsLibraryOpen = !IsLibraryOpen;
+
+    [RelayCommand]
+    private void TogglePlayback() => IsPlaybackOpen = !IsPlaybackOpen;
+
+    [RelayCommand]
+    private void ToggleLog() => IsLogOpen = !IsLogOpen;
+
+    /// <summary>Kayıt sırasında kontrol modu açık mı. Tarayıcıdaki çubukla da değişebilir.</summary>
+    [ObservableProperty]
+    private bool _isCheckMode;
+
+    /// <summary>Düğümler ya da bağlantılar değişti, akış ekranı yeniden çizilmeli.</summary>
+    public event Action? FlowChanged;
+
+    /// <summary>Yeni senaryo yüklendi, akış ekranı görünümünü sıfırlamalı.</summary>
+    public event Action? ScenarioLoaded;
+
+    public void NotifyFlowChanged() => FlowChanged?.Invoke();
+
+    [ObservableProperty]
     private bool _typeSlowly;
 
     [ObservableProperty]
@@ -247,6 +294,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void MarkChanged()
     {
+        NotifyFlowChanged();
         if (_loading)
             return;
         if (CurrentPath is not null)
@@ -262,6 +310,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _loading = true;
         try
         {
+            ScenarioGraph.EnsureGraph(scenario);
+            ScenarioGraph.EnsurePositions(scenario);
             Scenario = scenario;
             CurrentPath = path;
             ScenarioName = scenario.Name;
@@ -279,6 +329,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _loading = false;
         }
 
+        ScenarioLoaded?.Invoke();
+
         if (scenario.DataSourcePath is { } dataPath && File.Exists(dataPath))
         {
             LoadData(dataPath, scenario.DataSourceSheet);
@@ -295,6 +347,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         for (var i = 0; i < Steps.Count; i++)
             Steps[i].Number = i + 1;
         OnPropertyChanged(nameof(HasSteps));
+        NotifyFlowChanged();
     }
 
     public void RefreshLibrary()
@@ -445,9 +498,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         LoadScenario(scenario, null);
         SelectedLibraryItem = null;
 
-        var recorder = new Recorder(scenario) { Log = msg => Dispatcher.UIThread.Post(() => AddLog(msg)) };
-        recorder.StepChanged += (_, e) => Dispatcher.UIThread.Post(() => ApplyRecorderChange(e));
-        _recorder = recorder;
+        var recorder = new Recorder(scenario);
+        AttachRecorder(recorder);
         IsRecording = true;
         StatusText = "Kayıt yapılıyor... Tarayıcıda işlemlerinizi yapın, bitince \"Kaydı durdur\"a basın ya da tarayıcıyı kapatın.";
         AddLog($"Kayıt başladı: {url}");
@@ -467,6 +519,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             await recorder.DisposeAsync();
             _recorder = null;
             IsRecording = false;
+            IsCheckMode = false;
         }
 
         if (scenario.Steps.Count <= 1)
@@ -485,6 +538,152 @@ public sealed partial class MainWindowViewModel : ObservableObject
         AddLog($"Kaydedildi: {path}");
     }
 
+    private void AttachRecorder(Recorder recorder)
+    {
+        recorder.Log = msg => Dispatcher.UIThread.Post(() => AddLog(msg));
+        recorder.StepChanged += (_, e) => Dispatcher.UIThread.Post(() => ApplyRecorderChange(e));
+        recorder.ModeChanged += mode => Dispatcher.UIThread.Post(() => IsCheckMode = mode == RecorderMode.Check);
+        _recorder = recorder;
+    }
+
+    partial void OnIsCheckModeChanged(bool value)
+    {
+        if (_recorder is { } recorder)
+            _ = recorder.SetModeAsync(value ? RecorderMode.Check : RecorderMode.Record);
+        if (IsRecording)
+        {
+            StatusText = value
+                ? "Kontrol modu: tarayıcıda kontrol edilecek öğeye tıklayın. Tıklama siteye ulaşmaz, işlem yapılmaz."
+                : "Kayıt yapılıyor... Tarayıcıda işlemlerinizi yapın, bitince \"Kaydı durdur\"a basın ya da tarayıcıyı kapatın.";
+        }
+    }
+
+    /// <summary>
+    /// Bir düğümün boş çıkışından yeni dal kaydeder: tarayıcı açılır, başlangıçtan o düğüme kadar otomatik gidilir,
+    /// sonra kullanıcı işlemleri o çıkışa bağlanır.
+    /// </summary>
+    public void StartBranchRecording(StepViewModel from, StepPort port) => _ = RecordBranchAsync(from.Step, port);
+
+    private async Task RecordBranchAsync(Step from, StepPort port)
+    {
+        if (IsBusy)
+            return;
+        if (ScenarioGraph.PathTo(Scenario, from, port) is not { } path)
+        {
+            StatusText = "Bu düğüme başlangıçtan ulaşan bir yol yok. Önce bağlantıları kurun.";
+            return;
+        }
+
+        await FlushSaveAsync();
+        var recorder = new Recorder(Scenario, (from, port)) { CapturePaused = true };
+        AttachRecorder(recorder);
+        IsRecording = true;
+        StatusText = "Tarayıcı açılıyor, bu noktaya kadar otomatik gidiliyor...";
+        AddLog($"Dal kaydı: {StepDescriber.Describe(from)} düğümüne gidiliyor ({path.Count} adım).");
+        try
+        {
+            await recorder.StartAsync("about:blank");
+            var options = new PlaybackOptions
+            {
+                SpeedFactor = 0,
+                ActionTimeoutMs = (int)((ActionTimeoutSeconds ?? 15) * 1000),
+                TypeDelayMs = TypeSlowly ? 60 : 0,
+            };
+            var problem = await new Player().ReplayPathAsync(recorder.Pages[0], path, options,
+                msg => Dispatcher.UIThread.Post(() => AddLog(msg)));
+            recorder.CapturePaused = false;
+            StatusText = problem is null
+                ? "Bu noktaya gelindi. Dalın işlemlerini tarayıcıda yapın, bitince \"Kaydı durdur\"a basın."
+                : "Otomatik gidiş yarıda kaldı. Kalanı tarayıcıda elle yapın; bu sırada yaptıklarınız da kaydedilir.";
+            if (problem is not null)
+                AddLog($"Otomatik gidiş durdu: {problem}");
+            await recorder.Completion;
+            StatusText = "Dal kaydı tamamlandı.";
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Dal kaydı başlatılamadı: {ex.Message}");
+            StatusText = "Dal kaydı başlatılamadı. Ayrıntılar aşağıdaki günlükte.";
+        }
+        finally
+        {
+            await recorder.DisposeAsync();
+            _recorder = null;
+            IsRecording = false;
+            IsCheckMode = false;
+        }
+
+        MarkChanged();
+        await FlushSaveAsync();
+    }
+
+    public void SetStart(StepViewModel vm)
+    {
+        if (IsBusy)
+            return;
+        Scenario.StartStepId = vm.Step.Id;
+        MarkChanged();
+    }
+
+    public void SetLoopStart(StepViewModel vm)
+    {
+        if (IsBusy)
+            return;
+        Scenario.LoopStartStepId = vm.Step.Id;
+        StatusText = "\"Sayfayı açık tut\" ile oynatırken sonraki tekrarlar bu düğümden başlar.";
+        MarkChanged();
+    }
+
+    public bool IsStart(Step step) => Scenario.StartStepId == step.Id;
+
+    /// <summary>Otomatik belirlenen de dahil, tekrarların başlayacağı düğüm.</summary>
+    public Step? LoopStartStep => new ScenarioFlow(Scenario).LoopStart;
+
+    public void Connect(Step from, StepPort port, Step to)
+    {
+        if (IsBusy || from == to)
+            return;
+        ScenarioGraph.SetLink(from, port, to.Id);
+        RefreshStep(from);
+        MarkChanged();
+    }
+
+    public void Disconnect(Step from, StepPort port)
+    {
+        if (IsBusy)
+            return;
+        ScenarioGraph.SetLink(from, port, null);
+        RefreshStep(from);
+        MarkChanged();
+    }
+
+    private void RefreshStep(Step step) => Steps.FirstOrDefault(s => s.Step == step)?.Refresh();
+
+    [RelayCommand]
+    private void ArrangeFlow()
+    {
+        ScenarioGraph.AutoLayout(Scenario);
+        MarkChanged();
+        ScenarioLoaded?.Invoke();
+    }
+
+    [RelayCommand]
+    private void AddConditionStep()
+    {
+        if (IsBusy)
+            return;
+        InsertStepAfter(SelectedStep, new Step { Type = StepType.Condition, Condition = ConditionKind.PageHasText, Value = "" });
+        StatusText = "Sağdaki panelden aranacak yazıyı girin. Öğe kontrolü için kayıt sırasında kontrol modunu kullanın.";
+    }
+
+    [RelayCommand]
+    private void AddEndStep()
+    {
+        if (IsBusy)
+            return;
+        InsertStepAfter(SelectedStep, new Step { Type = StepType.End });
+    }
+
     private bool CanStopRecording() => IsRecording;
 
     [RelayCommand(CanExecute = nameof(CanStopRecording))]
@@ -501,6 +700,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             case StepChangeKind.Added:
                 var vm = new StepViewModel(e.Step, this);
                 Steps.Insert(Math.Min(e.Index, Steps.Count), vm);
+                ScenarioGraph.EnsurePositions(Scenario);
                 SelectedStep = vm;
                 break;
             case StepChangeKind.Updated:
@@ -536,7 +736,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (IsBusy)
             return;
         Steps.Remove(vm);
-        Scenario.Steps.Remove(vm.Step);
+        ScenarioGraph.Remove(Scenario, vm.Step);
+        if (SelectedStep == vm)
+            SelectedStep = null;
+        foreach (var other in Steps)
+            other.Refresh();
         Renumber();
         MarkChanged();
     }
@@ -545,7 +749,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (IsBusy)
             return;
-        InsertStepAfter(vm, vm.Step.Clone());
+        ShowInserted(ScenarioGraph.Duplicate(Scenario, vm.Step));
+        StatusText = "Düğüm klonlandı. Sağdaki panelden düzenleyin, sonra bir çıkıştan sürükleyerek bağlayın.";
     }
 
     [RelayCommand]
@@ -575,20 +780,27 @@ public sealed partial class MainWindowViewModel : ObservableObject
             StatusText = "Önce listeden beklenecek öğeye ait bir adımı (ör. bir tıklama) seçin.";
             return;
         }
-        InsertStepAt(Steps.IndexOf(selected), StepDescriber.WaitForElementOf(selected.Step, WaitStepTimeoutMs));
+        var wait = StepDescriber.WaitForElementOf(selected.Step, WaitStepTimeoutMs);
+        ScenarioGraph.InsertBefore(Scenario, selected.Step, wait);
+        ShowInserted(wait);
     }
 
     // Bekleme adımları yavaş işlemler için eklendiğinden genel zaman aşımından uzun süre tanınır.
     private int WaitStepTimeoutMs => Math.Max(60_000, (int)((ActionTimeoutSeconds ?? 15) * 1000));
 
-    private void InsertStepAfter(StepViewModel? anchor, Step step) =>
-        InsertStepAt(anchor is null ? Steps.Count : Steps.IndexOf(anchor) + 1, step);
-
-    private void InsertStepAt(int index, Step step)
+    private void InsertStepAfter(StepViewModel? anchor, Step step)
     {
-        Scenario.Steps.Insert(index, step);
+        ScenarioGraph.InsertAfter(Scenario, anchor?.Step, step);
+        ShowInserted(step);
+    }
+
+    private void ShowInserted(Step step)
+    {
+        ScenarioGraph.EnsurePositions(Scenario);
         var vm = new StepViewModel(step, this);
-        Steps.Insert(index, vm);
+        Steps.Insert(Scenario.Steps.IndexOf(step), vm);
+        foreach (var other in Steps)
+            other.Refresh();
         SelectedStep = vm;
         Renumber();
         MarkChanged();
@@ -716,6 +928,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             RetryCount = (int)(RetryCount ?? 0),
             ContinueOnError = ContinueOnError,
             FreshSessionPerIteration = FreshSession,
+            KeepPageOpen = KeepPageOpen,
             TypeDelayMs = TypeSlowly ? 60 : 0,
             ScreenshotDirectory = _lastScreenshotDir,
         };
@@ -781,7 +994,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Steps[e.StepIndex].State = StepRunState.Running;
                 break;
             case PlaybackEventKind.StepCompleted when e.StepIndex < Steps.Count:
-                Steps[e.StepIndex].State = StepRunState.Ok;
+                Steps[e.StepIndex].State = e.Port == StepPort.False ? StepRunState.No : StepRunState.Ok;
+                break;
+            case PlaybackEventKind.StepHandledError:
+                if (e.StepIndex < Steps.Count)
+                {
+                    Steps[e.StepIndex].State = StepRunState.Failed;
+                    Steps[e.StepIndex].Error = e.Message;
+                }
+                AddLog($"Tekrar {e.Iteration}{row}: adım {e.StepIndex + 1} hatalı, B planından devam ediliyor — {e.Message}");
                 break;
             case PlaybackEventKind.StepFailed:
                 if (e.StepIndex < Steps.Count)

@@ -7,6 +7,9 @@ namespace WebAutomater.Core.Recording;
 
 public enum StepChangeKind { Added, Updated, Removed }
 
+/// <summary>Record: işlemler adım olur. Check: tıklanan öğe işlem görmez, kontrol düğümü oluşturulur.</summary>
+public enum RecorderMode { Record, Check }
+
 public sealed class StepChangedEventArgs(StepChangeKind kind, Step step, int index) : EventArgs
 {
     public StepChangeKind Kind { get; } = kind;
@@ -38,11 +41,44 @@ public sealed class Recorder : IAsyncDisposable
     private long _lastTs;
     private long _lastActionTs;
     private bool _started;
+    private (Step Step, StepPort Port)? _tail;
+    private readonly HashSet<Step> _added = [];
+    private volatile RecorderMode _mode;
 
-    public Recorder(Scenario? scenario = null)
+    /// <param name="scenario">Eklenecek senaryo; boşsa yeni senaryo.</param>
+    /// <param name="attachTo">Doluysa kayıt bu düğümün bu çıkışından dal olarak başlar ve başa "Sayfaya git" eklenmez.</param>
+    public Recorder(Scenario? scenario = null, (Step Step, StepPort Port)? attachTo = null)
     {
         Scenario = scenario ?? new Scenario();
+        ScenarioGraph.EnsureGraph(Scenario);
+        _tail = attachTo;
+        IsBranch = attachTo is not null;
     }
+
+    private bool IsBranch { get; }
+
+    /// <summary>Doluyken işlemler kaydedilmez; dal kaydında başlangıçtan oraya kadar otomatik gidilirken kullanılır.</summary>
+    public bool CapturePaused
+    {
+        get;
+        set
+        {
+            field = value;
+            if (!value)
+            {
+                lock (_gate)
+                {
+                    _lastTs = Now();
+                    _lastActionTs = 0; // Otomatik gidişin son geçişi kullanıcının işlemine atfedilmesin.
+                }
+            }
+        }
+    }
+
+    public RecorderMode Mode => _mode;
+
+    /// <summary>Mod, tarayıcıdaki çubuktan ya da <see cref="SetModeAsync"/> ile değişince; arka plandan çağrılır.</summary>
+    public event Action<RecorderMode>? ModeChanged;
 
     public Scenario Scenario { get; }
 
@@ -72,14 +108,20 @@ public sealed class Recorder : IAsyncDisposable
 
         _context = await _browser.NewContextAsync(new BrowserNewContextOptions { ViewportSize = ViewportSize.NoViewport });
         await _context.ExposeBindingAsync("__waRecord", (BindingSource source, string json) => OnRecorded(source, json));
+        await _context.ExposeBindingAsync("__waModeChanged", (BindingSource source, string mode) => OnPageModeChanged(source, mode));
+        await _context.ExposeBindingAsync("__waGetMode", (Func<BindingSource, string>)(_ => ModeName(_mode)));
         await _context.AddInitScriptAsync(RecorderScript.Source);
         _context.Page += (_, page) => AttachPage(page);
 
         var page = await _context.NewPageAsync();
         AttachPage(page);
 
-        Scenario.StartUrl ??= url;
-        AddStep(new Step { Type = StepType.Navigate, Value = url, PageIndex = 0 });
+        if (!IsBranch)
+        {
+            Scenario.StartUrl ??= url;
+            AddStep(new Step { Type = StepType.Navigate, Value = url, PageIndex = 0 });
+        }
+
         try
         {
             await page.GotoAsync(url);
@@ -97,6 +139,47 @@ public sealed class Recorder : IAsyncDisposable
             _started = true;
         }
     }
+
+    /// <summary>Kayıt ile kontrol modu arasında geçiş; tüm sekme ve çerçevelere iletilir.</summary>
+    public async Task SetModeAsync(RecorderMode mode)
+    {
+        if (_mode == mode)
+            return;
+        _mode = mode;
+        await BroadcastModeAsync(null);
+        ModeChanged?.Invoke(mode);
+    }
+
+    private void OnPageModeChanged(BindingSource source, string mode)
+    {
+        var parsed = mode == "check" ? RecorderMode.Check : RecorderMode.Record;
+        if (_mode == parsed)
+            return;
+        _mode = parsed;
+        _ = BroadcastModeAsync(source.Frame);
+        ModeChanged?.Invoke(parsed);
+    }
+
+    private async Task BroadcastModeAsync(IFrame? except)
+    {
+        var name = ModeName(_mode);
+        foreach (var page in Pages.Where(p => !p.IsClosed))
+        {
+            foreach (var frame in page.Frames.Where(f => f != except))
+            {
+                try
+                {
+                    await frame.EvaluateAsync("m => window.__waSetMode && window.__waSetMode(m)", name);
+                }
+                catch (PlaywrightException)
+                {
+                    // Çerçeve o anda kapanıyor ya da yükleniyor olabilir; yüklenince modu kendisi sorar.
+                }
+            }
+        }
+    }
+
+    private static string ModeName(RecorderMode mode) => mode == RecorderMode.Check ? "check" : "record";
 
     public async Task StopAsync()
     {
@@ -162,7 +245,7 @@ public sealed class Recorder : IAsyncDisposable
             // Geçişin bittiği an değil başladığı an karşılaştırılır; sunucu yavaş yanıt verse de
             // geçiş doğru işleme bağlanır. Aynı belge içi geçişlerde (SPA) istek olmaz.
             var isDocumentLoad = _navigationStarts.Remove(page, out var startedAt);
-            if (!_started)
+            if (!_started || CapturePaused)
                 return;
 
             if ((isDocumentLoad ? startedAt : now) - _lastActionTs < NavigationAttributionMs)
@@ -193,7 +276,7 @@ public sealed class Recorder : IAsyncDisposable
         for (var i = Scenario.Steps.Count - 1; i >= 0; i--)
         {
             var step = Scenario.Steps[i];
-            if (step.PageIndex != pageIndex)
+            if (step.PageIndex != pageIndex || !_added.Contains(step) || step.Type == StepType.Condition)
                 continue;
             if (step.Type is not (StepType.Navigate or StepType.Wait) && !step.WaitForNavigation)
             {
@@ -215,7 +298,14 @@ public sealed class Recorder : IAsyncDisposable
         {
             return;
         }
-        if (ev is null || ev.Selectors.Count == 0)
+        if (ev is null || CapturePaused)
+            return;
+        if (ev.Type == "condition")
+        {
+            AddCondition(source, ev);
+            return;
+        }
+        if (ev.Selectors.Count == 0)
             return;
 
         var type = ev.Type switch
@@ -255,11 +345,7 @@ public sealed class Recorder : IAsyncDisposable
                 Multiple = ev.Multiple,
                 PageIndex = Math.Max(0, _pages.IndexOf(page)),
             };
-            if (frame != page.MainFrame)
-            {
-                step.FrameName = string.IsNullOrEmpty(frame.Name) ? null : frame.Name;
-                step.FrameUrl = frame.Url;
-            }
+            ApplyFrame(step, page, frame);
 
             var ts = ev.Ts;
             var delay = (int)Math.Max(0, ts - _lastTs);
@@ -274,12 +360,59 @@ public sealed class Recorder : IAsyncDisposable
         }
     }
 
+    private void AddCondition(BindingSource source, RecordedEvent ev)
+    {
+        if (!Enum.TryParse<ConditionKind>(ev.Condition, ignoreCase: true, out var kind))
+            return;
+
+        var selectors = kind == ConditionKind.PageHasText ? [] : ev.Selectors;
+        // Metni sınanacak öğe metniyle aranırsa, metin değişince başka öğe bulunur ya da hiç bulunmaz:
+        // "eşit mi" sorusu anlamını yitirir. Bu yüzden konuma/kimliğe dayalı seçiciler kullanılır.
+        if (kind is ConditionKind.TextEquals or ConditionKind.TextContains)
+        {
+            var stable = selectors.Where(s => !s.StartsWith("internal:text=") && !s.StartsWith("internal:role=")).ToList();
+            if (stable.Count > 0)
+                selectors = stable;
+        }
+
+        lock (_gate)
+        {
+            var step = new Step
+            {
+                Type = StepType.Condition,
+                Condition = kind,
+                Selectors = selectors,
+                Value = ev.Value,
+                TargetName = kind == ConditionKind.PageHasText ? null : ev.Name,
+                TargetKind = kind == ConditionKind.PageHasText ? null : ev.Kind,
+                PageIndex = Math.Max(0, _pages.IndexOf(source.Page)),
+            };
+            ApplyFrame(step, source.Page, source.Frame);
+
+            // Kullanıcının kontrolü kurarken harcadığı süre oynatmada beklenmez.
+            _lastTs = Now();
+            AddStepLocked(step);
+        }
+    }
+
+    private static void ApplyFrame(Step step, IPage page, IFrame frame)
+    {
+        if (frame == page.MainFrame)
+            return;
+        step.FrameName = string.IsNullOrEmpty(frame.Name) ? null : frame.Name;
+        step.FrameUrl = frame.Url;
+    }
+
     // Art arda gelen olayları tek adımda birleştirir: her tuş vuruşu yerine tek bir "yaz",
     // iki tıklama + çift tıklama yerine tek bir "çift tıkla".
     private bool TryMerge(Step step, int delay)
     {
         var steps = Scenario.Steps;
         var last = steps.Count > 0 ? steps[^1] : null;
+
+        // Dal kaydında listedeki önceki adım bu kayda ait olmayabilir.
+        if (last is not null && !_added.Contains(last))
+            last = null;
 
         if (step.Type == StepType.Fill && last is { Type: StepType.Fill } && SameTarget(last, step))
         {
@@ -292,11 +425,11 @@ public sealed class Recorder : IAsyncDisposable
         {
             var firstDelay = delay;
             var removed = 0;
-            while (removed < 2 && steps.Count > 0 && steps[^1] is { Type: StepType.Click } click
+            while (removed < 2 && steps.Count > 0 && steps[^1] is { Type: StepType.Click } click && _added.Contains(click)
                    && SameTarget(click, step) && (removed == 0 ? delay : firstDelay) < DoubleClickWindowMs)
             {
                 firstDelay = click.DelayBeforeMs;
-                steps.RemoveAt(steps.Count - 1);
+                RemoveTail(click);
                 Raise(StepChangeKind.Removed, click, steps.Count);
                 removed++;
             }
@@ -318,9 +451,26 @@ public sealed class Recorder : IAsyncDisposable
             AddStepLocked(step);
     }
 
+    private void RemoveTail(Step step)
+    {
+        // Silinen son düğüme gelen bağlantı yeni kuyruk olur; sonraki adım oraya eklenir.
+        var previous = Scenario.Steps
+            .SelectMany(s => Enum.GetValues<StepPort>().Select(port => (Step: s, Port: port)))
+            .FirstOrDefault(x => ScenarioGraph.GetLink(x.Step, x.Port) == step.Id);
+        ScenarioGraph.Remove(Scenario, step);
+        _added.Remove(step);
+        _tail = previous.Step is null ? null : previous;
+    }
+
     private void AddStepLocked(Step step)
     {
         Scenario.Steps.Add(step);
+        _added.Add(step);
+        if (_tail is { } tail)
+            ScenarioGraph.SetLink(tail.Step, tail.Port, step.Id);
+        else
+            Scenario.StartStepId = step.Id;
+        _tail = (step, StepPort.Next);
         Raise(StepChangeKind.Added, step, Scenario.Steps.Count - 1);
     }
 

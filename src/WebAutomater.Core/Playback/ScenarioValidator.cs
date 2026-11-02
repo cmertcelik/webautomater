@@ -18,6 +18,9 @@ public static class ScenarioValidator
         if (enabled.Count == 0)
             problems.Add("Senaryoda etkin adım yok.");
 
+        if (scenario.Graph && enabled.Count > 0 && new ScenarioFlow(scenario).Start is null)
+            problems.Add("Başlangıç düğümü belirlenmemiş.");
+
         for (var i = 0; i < scenario.Steps.Count; i++)
         {
             var step = scenario.Steps[i];
@@ -36,6 +39,29 @@ public static class ScenarioValidator
                         problems.Add($"Adım {no}: {{{{{key}}}}} şablonundaki kolon veri kaynağında yok.");
                 }
             }
+
+            if (scenario.Graph)
+            {
+                foreach (var port in Enum.GetValues<StepPort>())
+                {
+                    if (ScenarioGraph.GetLink(step, port) is { } link && scenario.Steps.All(s => s.Id != link))
+                        problems.Add($"Adım {no}: bağlantısı silinmiş bir düğümü gösteriyor.");
+                }
+            }
+
+            if (step.Type == StepType.Condition)
+            {
+                var kind = step.Condition ?? ConditionKind.Visible;
+                if (kind != ConditionKind.PageHasText && step.Selectors.Count == 0)
+                    problems.Add($"Adım {no}: kontrol edilecek öğe yok. Kontrol modunda bir öğe seçin ya da türü \"Sayfada yazı var mı\" yapın.");
+                if (kind is ConditionKind.TextEquals or ConditionKind.TextContains or ConditionKind.PageHasText
+                    && string.IsNullOrWhiteSpace(step.Value) && string.IsNullOrWhiteSpace(step.Parameter))
+                    problems.Add($"Adım {no}: kontrol edilecek metin boş.");
+                continue;
+            }
+
+            if (step.Type == StepType.End)
+                continue;
 
             var needsTarget = step.Type is not (StepType.Navigate or StepType.Wait or StepType.Press or StepType.WaitForText);
             var clickByText = step.Type is StepType.Click or StepType.DoubleClick or StepType.Hover
