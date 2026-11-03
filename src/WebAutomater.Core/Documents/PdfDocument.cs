@@ -210,26 +210,93 @@ public sealed class PdfDocument : IDisposable
         if (first < 0 || last < first)
             return rects;
 
-        // Sayfa koordinatını ekrana çevirme işini PDFium yapar: döndürülmüş sayfalar ve kırpma kutusu da doğru çıkar.
-        // Tam sayı döndürdüğü için hassasiyet adına büyütülmüş bir alana çevrilir.
-        const int precision = 20;
-        var sizeX = (int)Math.Round(width * precision);
-        var sizeY = (int)Math.Round(height * precision);
         var count = Native.FPDFText_CountRects(text, first, last - first + 1);
         for (var i = 0; i < count; i++)
         {
             if (Native.FPDFText_GetRect(text, i, out var left, out var top, out var right, out var bottom) == 0)
                 continue;
-            Native.FPDF_PageToDevice(page, 0, 0, sizeX, sizeY, 0, left, top, out var x1, out var y1);
-            Native.FPDF_PageToDevice(page, 0, 0, sizeX, sizeY, 0, right, bottom, out var x2, out var y2);
-            rects.Add(new PdfRect(
-                Math.Min(x1, x2) / (double)precision,
-                Math.Min(y1, y2) / (double)precision,
-                Math.Max(x1, x2) / (double)precision,
-                Math.Max(y1, y2) / (double)precision));
+            rects.Add(ToPageView(page, width, height, left, top, right, bottom));
         }
 
         return rects;
+    }
+
+    /// <summary>
+    /// PDF koordinatındaki bir kutuyu ekrandaki sayfa koordinatına (nokta, sol üst başlangıç) çevirir.
+    /// Çeviriyi PDFium yapar: döndürülmüş sayfalar ve kırpma kutusu da doğru çıkar.
+    /// </summary>
+    private static PdfRect ToPageView(IntPtr page, double width, double height, double left, double top, double right, double bottom)
+    {
+        // PDFium tam sayı döndürdüğü için hassasiyet adına büyütülmüş bir alana çevrilir.
+        const int precision = 20;
+        var sizeX = (int)Math.Round(width * precision);
+        var sizeY = (int)Math.Round(height * precision);
+        Native.FPDF_PageToDevice(page, 0, 0, sizeX, sizeY, 0, left, top, out var x1, out var y1);
+        Native.FPDF_PageToDevice(page, 0, 0, sizeX, sizeY, 0, right, bottom, out var x2, out var y2);
+        return new PdfRect(
+            Math.Min(x1, x2) / (double)precision,
+            Math.Min(y1, y2) / (double)precision,
+            Math.Max(x1, x2) / (double)precision,
+            Math.Max(y1, y2) / (double)precision);
+    }
+
+    /// <summary>
+    /// Sayfanın fareyle seçilebilir metin katmanı: her karakter ve ekrandaki kutusu.
+    /// Taranmış (yalnızca resim olan) sayfalarda boş döner.
+    /// </summary>
+    public PdfTextLayout GetTextLayout(int index)
+    {
+        var (width, height) = _pageSizes[index];
+        lock (Gate)
+        {
+            var page = LoadPage(index);
+            try
+            {
+                var text = Native.FPDFText_LoadPage(page);
+                if (text == IntPtr.Zero)
+                    return PdfTextLayout.Empty;
+                try
+                {
+                    var count = Math.Max(Native.FPDFText_CountChars(text), 0);
+                    var chars = new string[count];
+                    var boxes = new PdfRect?[count];
+                    for (var i = 0; i < count; i++)
+                    {
+                        var code = Native.FPDFText_GetUnicode(text, i);
+                        chars[i] = code is > 0 and <= 0x10FFFF and not (>= 0xD800 and <= 0xDFFF)
+                            ? char.ConvertFromUtf32((int)code)
+                            : "";
+                        boxes[i] = GetCharBox(page, text, i, width, height);
+                    }
+
+                    return new PdfTextLayout(chars, boxes);
+                }
+                finally
+                {
+                    Native.FPDFText_ClosePage(text);
+                }
+            }
+            finally
+            {
+                Native.FPDF_ClosePage(page);
+            }
+        }
+    }
+
+    private static PdfRect? GetCharBox(IntPtr page, IntPtr text, int index, double width, double height)
+    {
+        // PDFium'un eklediği boşluk ve satır sonlarının sayfada yeri yoktur.
+        if (Native.FPDFText_IsGenerated(text, index) == 1)
+            return null;
+
+        // "Gevşek" kutu yazı tipinin tam satır yüksekliğidir: seçim harf boyuna göre inip çıkmaz.
+        double left, top, right, bottom;
+        if (Native.FPDFText_GetLooseCharBox(text, index, out var loose) != 0 && loose.Right > loose.Left && loose.Top > loose.Bottom)
+            (left, top, right, bottom) = (loose.Left, loose.Top, loose.Right, loose.Bottom);
+        else if (Native.FPDFText_GetCharBox(text, index, out left, out right, out bottom, out top) == 0 || right <= left || top <= bottom)
+            return null;
+
+        return ToPageView(page, width, height, left, top, right, bottom);
     }
 
     public void Dispose()
@@ -270,6 +337,12 @@ public sealed class PdfDocument : IDisposable
 
     private static class Native
     {
+        [StructLayout(LayoutKind.Sequential)]
+        public struct FsRectF
+        {
+            public float Left, Top, Right, Bottom;
+        }
+
         private const string Lib = "pdfium";
 
         public const int BitmapBgra = 4;
@@ -295,6 +368,10 @@ public sealed class PdfDocument : IDisposable
         [DllImport(Lib)] public static extern int FPDFText_GetCharIndexFromTextIndex(IntPtr textPage, int textIndex);
         [DllImport(Lib)] public static extern int FPDFText_CountRects(IntPtr textPage, int startIndex, int count);
         [DllImport(Lib)] public static extern int FPDFText_GetRect(IntPtr textPage, int rectIndex, out double left, out double top, out double right, out double bottom);
+        [DllImport(Lib)] public static extern uint FPDFText_GetUnicode(IntPtr textPage, int index);
+        [DllImport(Lib)] public static extern int FPDFText_IsGenerated(IntPtr textPage, int index);
+        [DllImport(Lib)] public static extern int FPDFText_GetCharBox(IntPtr textPage, int index, out double left, out double right, out double bottom, out double top);
+        [DllImport(Lib)] public static extern int FPDFText_GetLooseCharBox(IntPtr textPage, int index, out FsRectF rect);
         [DllImport(Lib)] public static extern int FPDF_PageToDevice(IntPtr page, int startX, int startY, int sizeX, int sizeY, int rotate, double pageX, double pageY, out int deviceX, out int deviceY);
     }
 }

@@ -64,6 +64,7 @@ Soldan sağa dört panel vardır; aralarındaki çizgiler sürüklenerek genişl
 
 1. **Dosyalar:** **Klasör seç...** ile klasörü seçin. Alt klasörler ok ya da çift tıklamayla açılır (klavyede sağ/sol ok, Enter). Seçilen klasör sonraki açılışta hatırlanır.
 2. **PDF görüntüleyici:** PDF'e tıklayınca açılır. Ctrl + tekerlek yakınlaştırır; **Sığdır** sayfayı alan genişliğine oturtur. PageUp/PageDown/Home/End çalışır.
+   - **Yazı seçip kopyalama:** Fareyle sürükleyerek yazıyı seçin (sayfalar arasında da; fare alanın dışına çıkınca sayfa kendiliğinden kayar). Çift tıklama kelimeyi, üç kez tıklama satırı seçer; Shift + tıklama seçimi uzatır. **Ctrl+C** kopyalar, **Ctrl+A** tüm belgeyi seçer, **Esc** seçimi kaldırır. Sağ tık menüsünde de **Kopyala** ve **Tümünü seç** var. Taranmış (görüntü) sayfalarda seçilecek yazı yoktur.
 3. **Bulunan Numaralar:** 11 haneli sayılar T.C. kimlik, 10 haneli sayılar vergi numarası olarak listelenir. Aynı numara tek satırda, geçtiği sayfalarla birlikte görünür; çift tıklama o sayfaya gider.
    - **✓** kontrol hanesi doğru, **?** hane sayısı uyuyor ama kontrol hanesi tutmuyor (telefon, belge numarası olabilir). **Yalnızca doğrulananlar** bunları gizler.
    - Bulunan numaralar sayfada renklendirilir: sarı doğrulanmış, turuncu doğrulanmamış. Bu yalnızca ekrandaki görünümdür, PDF dosyası değişmez. Görüntüleyicideki **Vurgula** düğmesi kapatıp açar.
