@@ -1,9 +1,13 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- .NET 8 (LTS): .NET 8 SDK'sı olan her bilgisayarda açılıp derlenebilsin. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- Yalnızca daha yeni bir .NET kuruluysa (ör. 10) uygulama ve testler onunla da çalışsın. -->
+    <RollForward>Major</RollForward>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
+    <!-- .NET 8 SDK'sının derleyicisi C# 12'ye kadar destekler; daha yeni dil özellikleri kullanılmasın. -->
+    <LangVersion>12</LangVersion>
     <Version>0.1.0</Version>
     <Authors>WebAutomater</Authors>
   </PropertyGroup>

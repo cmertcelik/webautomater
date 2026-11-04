@@ -14,7 +14,7 @@ public sealed class PdfOpenException(string message, Exception? inner = null) : 
 /// </summary>
 public sealed class PdfDocument : IDisposable
 {
-    private static readonly Lock Gate = new();
+    private static readonly object Gate = new();
     private static bool _initialized;
 
     private GCHandle _pin;
@@ -29,7 +29,10 @@ public sealed class PdfDocument : IDisposable
         _pageSizes = pageSizes;
     }
 
-    public string Path { get; }
+    public string Path { get; private set; }
+
+    /// <summary>Dosya taşındığında yeni yolu kaydeder. Belge bellekte olduğu için yeniden açmak gerekmez.</summary>
+    public void UpdatePath(string newPath) => Path = newPath;
 
     public int PageCount => _pageSizes.Length;
 

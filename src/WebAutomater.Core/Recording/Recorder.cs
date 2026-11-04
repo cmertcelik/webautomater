@@ -57,13 +57,15 @@ public sealed class Recorder : IAsyncDisposable
 
     private bool IsBranch { get; }
 
+    private volatile bool _capturePaused;
+
     /// <summary>Doluyken işlemler kaydedilmez; dal kaydında başlangıçtan oraya kadar otomatik gidilirken kullanılır.</summary>
     public bool CapturePaused
     {
-        get;
+        get => _capturePaused;
         set
         {
-            field = value;
+            _capturePaused = value;
             if (!value)
             {
                 lock (_gate)

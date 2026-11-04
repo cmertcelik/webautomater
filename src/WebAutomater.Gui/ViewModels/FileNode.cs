@@ -43,6 +43,10 @@ public sealed partial class FileNode(string name, string fullPath, bool isDirect
     public bool CanExpand => IsDirectory && !IsEmpty;
 
     public double ChevronAngle => IsExpanded ? 90 : 0;
+
+    /// <summary>Sürüklenen öğe bu klasöre bırakılacak: satır vurgulanır.</summary>
+    [ObservableProperty]
+    private bool _isDropTarget;
 }
 
 public static class FileTree
@@ -55,23 +59,9 @@ public static class FileTree
         RecurseSubdirectories = false,
     };
 
-    private static readonly IComparer<string> NameComparer = CreateComparer();
-
-    private static IComparer<string> CreateComparer()
-    {
-        var compare = CultureInfo.GetCultureInfo("tr-TR").CompareInfo;
-        try
-        {
-            // "Belge2" "Belge10"dan önce gelsin.
-            var numeric = compare.GetStringComparer(CompareOptions.IgnoreCase | CompareOptions.NumericOrdering);
-            numeric.Compare("a2", "a10");
-            return numeric;
-        }
-        catch (Exception ex) when (ex is ArgumentException or PlatformNotSupportedException)
-        {
-            return compare.GetStringComparer(CompareOptions.IgnoreCase);
-        }
-    }
+    // "Belge2" "Belge10"dan önce gelsin.
+    private static readonly IComparer<string> NameComparer =
+        new WebAutomater.Core.Text.NaturalStringComparer(CultureInfo.GetCultureInfo("tr-TR"));
 
     /// <summary>Bir klasörün doğrudan içeriği: önce klasörler, sonra dosyalar. Kullanıcı arayüzü dışında çağrılmalı.</summary>
     public static List<FileNode> ListChildren(string directory, int depth)

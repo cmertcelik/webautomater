@@ -161,8 +161,19 @@ public class DocumentLogWriterTests : IDisposable
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
+    private static readonly string[] DefaultHeaders =
+        ["PDF Dosya Yolu", "Belge Tarihi", "Belge Konusu", "Belge Numarası", "Destis Numarası", "Açıklama"];
+
     private static DocumentLogEntry Entry(string number = "0012") =>
-        new(@"C:\Belgeler\Örnek.pdf", new DateTime(2025, 12, 31), "Konu", number, "D-5", "=1+1");
+        new(
+        [
+            new("PDF Dosya Yolu", @"C:\Belgeler\Örnek.pdf", Width: 70),
+            new("Belge Tarihi", new DateTime(2025, 12, 31)),
+            new("Belge Konusu", "Konu"),
+            new("Belge Numarası", number),
+            new("Destis Numarası", "D-5"),
+            new("Açıklama", "=1+1"),
+        ]);
 
     [Fact]
     public void Creates_file_with_headers_and_appends_rows_in_order()
@@ -173,7 +184,7 @@ public class DocumentLogWriterTests : IDisposable
 
         using var wb = new XLWorkbook(path);
         var ws = wb.Worksheets.First();
-        Assert.Equal(DocumentLogWriter.Headers, Enumerable.Range(1, 6).Select(c => ws.Cell(1, c).GetString()));
+        Assert.Equal(DefaultHeaders, Enumerable.Range(1, 6).Select(c => ws.Cell(1, c).GetString()));
         Assert.Equal(@"C:\Belgeler\Örnek.pdf", ws.Cell(2, 1).GetString());
         Assert.Equal(new DateTime(2025, 12, 31), ws.Cell(2, 2).GetDateTime());
         Assert.Equal("Konu", ws.Cell(2, 3).GetString());
@@ -206,6 +217,47 @@ public class DocumentLogWriterTests : IDisposable
         Assert.Equal("dokunma", result.Worksheet("Diğer").Cell(1, 1).GetString());
     }
 
+    [Fact]
+    public void Matches_columns_by_header_and_adds_new_fields_as_new_columns()
+    {
+        var path = Path.Combine(_dir, "alanlar.xlsx");
+        DocumentLogWriter.Append(path, Entry());
+
+        // Sıra değişti, bir alan çıkarıldı, iki yeni alan eklendi; başlık büyük/küçük harf farklı.
+        DocumentLogWriter.Append(path, new DocumentLogEntry(
+        [
+            new("PDF Dosya Yolu", @"C:\b.pdf"),
+            new("belge numarası", "42"),
+            new("İncelendi", true),
+            new("Tür", "Dilekçe"),
+            new("Belge Tarihi", null),
+        ]));
+
+        using var wb = new XLWorkbook(path);
+        var ws = wb.Worksheets.First();
+        Assert.Equal([.. DefaultHeaders, "İncelendi", "Tür"], Enumerable.Range(1, 8).Select(c => ws.Cell(1, c).GetString()));
+        Assert.Equal(@"C:\b.pdf", ws.Cell(3, 1).GetString());
+        Assert.True(ws.Cell(3, 2).IsEmpty());
+        Assert.Equal("42", ws.Cell(3, 4).GetString());
+        Assert.True(ws.Cell(3, 3).IsEmpty());
+        Assert.Equal("Evet", ws.Cell(3, 7).GetString());
+        Assert.Equal("Dilekçe", ws.Cell(3, 8).GetString());
+        Assert.True(ws.Cell(2, 7).IsEmpty());
+    }
+
+    [Fact]
+    public void Pdf_path_column_is_optional()
+    {
+        var path = Path.Combine(_dir, "yolsuz.xlsx");
+        Assert.Equal(2, DocumentLogWriter.Append(path, new DocumentLogEntry([new("Konu", "A"), new("Tarih", new DateTime(2025, 1, 2))])));
+
+        using var wb = new XLWorkbook(path);
+        var ws = wb.Worksheets.First();
+        Assert.Equal(["Konu", "Tarih"], Enumerable.Range(1, 2).Select(c => ws.Cell(1, c).GetString()));
+        Assert.True(ws.Cell(1, 3).IsEmpty());
+        Assert.Equal("A", ws.Cell(2, 1).GetString());
+    }
+
     [Theory]
     [InlineData("31.12.2025")]
     [InlineData("31/12/2025")]
@@ -222,6 +274,39 @@ public class DocumentLogWriterTests : IDisposable
     [InlineData("32.12.2025")]
     [InlineData("yarın")]
     public void Rejects_bad_dates(string text) => Assert.False(DocumentDate.TryParse(text, out _));
+}
+
+public class PdfFolderScannerTests : IDisposable
+{
+    private readonly string _dir = Directory.CreateTempSubdirectory("wa-scan şğü").FullName;
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+
+    [Fact]
+    public void Finds_pdfs_in_subfolders_and_scans_each_page()
+    {
+        var sub = Directory.CreateDirectory(Path.Combine(_dir, "Alt", "Daha alt")).FullName;
+        File.WriteAllBytes(Path.Combine(_dir, "a.pdf"), TestPdf.Create("TC 10000000146", "VKN 1234567890"));
+        File.WriteAllBytes(Path.Combine(sub, "B.PDF"), TestPdf.Create("Bos sayfa", "TC 10000000146"));
+        File.WriteAllText(Path.Combine(_dir, "not.txt"), "10000000146");
+        File.WriteAllText(Path.Combine(_dir, "bozuk.pdf"), "pdf değil");
+
+        var files = PdfFolderScanner.FindPdfs(_dir);
+        Assert.Equal(3, files.Count);
+        Assert.DoesNotContain(files, f => f.EndsWith(".txt"));
+
+        var a = PdfFolderScanner.ScanFile(Path.Combine(_dir, "a.pdf"));
+        Assert.Null(a.Error);
+        Assert.Equal(2, a.PageCount);
+        Assert.Equal([(1, "10000000146"), (2, "1234567890")], a.Matches.Select(m => (m.Page, m.Match.Value)));
+
+        var b = PdfFolderScanner.ScanFile(Path.Combine(sub, "B.PDF"));
+        Assert.Equal((2, "10000000146"), (b.Matches.Single().Page, b.Matches.Single().Match.Value));
+
+        var broken = PdfFolderScanner.ScanFile(Path.Combine(_dir, "bozuk.pdf"));
+        Assert.NotNull(broken.Error);
+        Assert.Empty(broken.Matches);
+    }
 }
 
 /// <summary>Testler için her sayfasında tek satır yazı olan küçük bir PDF üretir.</summary>
@@ -258,5 +343,19 @@ internal static class TestPdf
             pdf.Append($"{offset:D10} 00000 n \n");
         pdf.Append($"trailer\n<< /Size {objects.Count + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
         return Encoding.ASCII.GetBytes(pdf.ToString());
+    }
+}
+
+public class NaturalStringComparerTests
+{
+    [Fact]
+    public void Sorts_numbers_by_value_and_letters_turkish_case_insensitive()
+    {
+        var comparer = new WebAutomater.Core.Text.NaturalStringComparer(System.Globalization.CultureInfo.GetCultureInfo("tr-TR"));
+        string[] names = ["Belge10.pdf", "belge2.pdf", "Belge1.pdf", "Çizelge.pdf", "Cetvel.pdf", "Dosya.pdf", "2024", "10"];
+        var sorted = names.Order(comparer).ToList();
+        Assert.Equal(["10", "2024", "Belge1.pdf", "belge2.pdf", "Belge10.pdf", "Cetvel.pdf", "Çizelge.pdf", "Dosya.pdf"], sorted);
+        Assert.True(comparer.Compare("a02", "a2") != 0);
+        Assert.True(comparer.Compare("a9", "a0010") < 0);
     }
 }

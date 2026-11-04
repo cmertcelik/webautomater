@@ -7,3 +7,4 @@ dist/
 *.tmp
 TestResults/
 wa-hatalar/
+.DS_Store

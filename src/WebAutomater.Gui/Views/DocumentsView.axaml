@@ -53,6 +53,44 @@
       <Setter Property="Padding" Value="4,1" />
       <Setter Property="MinHeight" Value="0" />
     </Style>
+    <Style Selector="Border.tree-row">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="3" />
+    </Style>
+    <Style Selector="Border.tree-row.drop">
+      <Setter Property="Background" Value="#661E88E5" />
+      <Setter Property="BorderBrush" Value="#1E88E5" />
+    </Style>
+    <Style Selector="TextBlock.drop-hint">
+      <Setter Property="Foreground" Value="#1E88E5" />
+      <Setter Property="Opacity" Value="1" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.drop-hint.invalid">
+      <Setter Property="Foreground" Value="#E53935" />
+    </Style>
+    <Style Selector="Border.droproot">
+      <Setter Property="BorderBrush" Value="#1E88E5" />
+      <Setter Property="Background" Value="#221E88E5" />
+    </Style>
+    <Style Selector="Border.field-editor">
+      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Padding" Value="6" />
+      <Setter Property="Margin" Value="0,6,0,0" />
+    </Style>
+    <Style Selector="Button.icon">
+      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="MinWidth" Value="26" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBox.multiline">
+      <Setter Property="MinHeight" Value="80" />
+    </Style>
     <Style Selector="ListBox.ids > ListBoxItem">
       <Setter Property="Padding" Value="6,3" />
       <Setter Property="MinHeight" Value="0" />
@@ -66,19 +104,42 @@
       <DockPanel>
         <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
           <TextBlock Text="Dosyalar" Classes="title" />
-          <Grid ColumnDefinitions="*,6,Auto">
+          <Grid ColumnDefinitions="*,6,Auto,6,Auto">
             <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Klasör seç..." Command="{Binding ChooseFolderCommand}" />
-            <Button Grid.Column="2" Content="Yenile" Command="{Binding RefreshTreeCommand}" IsEnabled="{Binding HasRoot}" />
+            <Button Name="NewFolderButton" Grid.Column="2" Content="Yeni klasör" IsEnabled="{Binding HasRoot}"
+                    ToolTip.Tip="Seçili klasörün içinde yeni klasör oluştur">
+              <Button.Flyout>
+                <Flyout Placement="BottomEdgeAlignedLeft">
+                  <StackPanel Width="260" Spacing="6">
+                    <TextBlock Text="Yeni klasör" Classes="title" />
+                    <TextBlock Classes="hint" Text="{Binding NewFolderLocation, StringFormat='Konum: {0}'}" TextTrimming="PathSegmentEllipsis"
+                               TextWrapping="NoWrap" ToolTip.Tip="{Binding NewFolderLocation}" />
+                    <TextBox Name="NewFolderBox" Text="{Binding NewFolderName}" />
+                    <TextBlock Text="{Binding NewFolderError}" Classes="hint" Foreground="#E53935" Opacity="1"
+                               IsVisible="{Binding NewFolderError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    <Button Name="CreateFolderButton" Classes="primary" HorizontalAlignment="Right" Content="Oluştur" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+            <Button Grid.Column="4" Content="Yenile" Command="{Binding RefreshTreeCommand}" IsEnabled="{Binding HasRoot}" />
           </Grid>
           <TextBlock Text="{Binding RootFolder}" Classes="hint" TextWrapping="NoWrap" TextTrimming="PathSegmentEllipsis"
                      ToolTip.Tip="{Binding RootFolder}" IsVisible="{Binding HasRoot}" />
           <TextBlock Text="{Binding TreeMessage}" Classes="hint" Foreground="#E53935"
                      IsVisible="{Binding TreeMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
         </StackPanel>
+        <TextBlock Name="DropHint" DockPanel.Dock="Bottom" Classes="hint drop-hint" Margin="0,6,0,0" IsVisible="False"
+                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+        <TextBlock DockPanel.Dock="Bottom" Classes="hint" Margin="0,6,0,0" IsVisible="{Binding HasRoot}"
+                   Text="Taşımak için dosya ya da klasörü sürükleyip bir klasörün üzerine bırakın; boş alana bırakınca ana klasöre taşınır." />
+        <Border Name="TreeFrame" BorderThickness="1" BorderBrush="Transparent" CornerRadius="4">
         <ListBox Name="Tree" Classes="tree" ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}"
+                 DragDrop.AllowDrop="True"
                  Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="vm:FileNode">
+              <Border Classes="tree-row" Classes.drop="{Binding IsDropTarget}">
               <Grid ColumnDefinitions="Auto,20,20,*" Background="Transparent" ToolTip.Tip="{Binding FullPath}" Opacity="{Binding RowOpacity}">
                 <Border Width="0" Margin="{Binding Indent}" />
                 <Button Grid.Column="1" Classes="chevron" IsVisible="{Binding CanExpand}"
@@ -100,9 +161,11 @@
                       Data="M 0,0 L 8,0 L 12,4 L 12,15 L 0,15 Z" Fill="#D32F2F" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="3" Text="{Binding Name}" Margin="5,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
               </Grid>
+              </Border>
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
+        </Border>
       </DockPanel>
     </Border>
 
@@ -141,28 +204,36 @@
     <Border Grid.Column="4" Classes="panel">
       <DockPanel>
         <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
-          <TextBlock Text="Bulunan Numaralar" Classes="title" />
-          <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Tümünü kopyala" Command="{Binding CopyAllCommand}" />
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Text="{Binding IdentifiersTitle}" Classes="title" TextWrapping="Wrap" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="icon" Content="✕" IsVisible="{Binding IsBulkMode}" Command="{Binding CloseBulkCommand}"
+                    ToolTip.Tip="Toplu sonuçları kapat, açık belgenin numaralarına dön" />
+          </Grid>
+          <Grid ColumnDefinitions="*,6,*">
+            <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Tümünü kopyala" Command="{Binding CopyAllCommand}" />
+            <Button Grid.Column="2" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{Binding FindAllText}"
+                    Command="{Binding FindAllCommand}"
+                    ToolTip.Tip="Seçili klasördeki (alt klasörler dahil) tüm PDF'lerde numara arar" />
+          </Grid>
           <CheckBox Content="Yalnızca doğrulananlar" IsChecked="{Binding OnlyValid}"
                     ToolTip.Tip="Kontrol hanesi tutmayanları (telefon, belge numarası vb.) gizler" />
           <TextBlock Text="{Binding ScanStatus}" Classes="hint" />
-          <TextBlock Text="{Binding ScanWarning}" Classes="hint" Foreground="#EF6C00" Opacity="1"
+          <TextBlock Text="{Binding ScanWarning}" Classes="hint" Foreground="#EF6C00" Opacity="1" ToolTip.Tip="{Binding ScanWarningTip}"
                      IsVisible="{Binding ScanWarning, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
         </StackPanel>
-        <TextBlock DockPanel.Dock="Bottom" Classes="hint" Margin="0,6,0,0"
-                   Text="Ctrl ya da Shift ile seçip Ctrl+C ile kopyalayın. Çift tıklama o sayfaya gider." />
+        <TextBlock DockPanel.Dock="Bottom" Classes="hint" Margin="0,6,0,0" Text="{Binding IdentifiersHint}" />
         <ListBox Name="Identifiers" Classes="ids" ItemsSource="{Binding VisibleRows}" SelectionMode="Multiple" Background="Transparent"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="vm:IdentifierRow">
-              <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" Background="Transparent">
+              <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" Background="Transparent" ToolTip.Tip="{Binding LocationsTip}">
                 <TextBlock Text="{Binding Value}" FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="14" />
                 <TextBlock Grid.Column="1" Text="✓" Foreground="#43A047" FontWeight="Bold" IsVisible="{Binding IsValid}" ToolTip.Tip="{Binding ValidityTip}" />
                 <TextBlock Grid.Column="1" Text="?" Foreground="#EF6C00" FontWeight="Bold" IsVisible="{Binding !IsValid}" ToolTip.Tip="{Binding ValidityTip}" />
-                <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="6">
+                <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnDefinitions="Auto,6,*">
                   <TextBlock Text="{Binding KindText}" Classes="hint" FontSize="11" />
-                  <TextBlock Text="{Binding PagesText}" Classes="hint" FontSize="11" />
-                </StackPanel>
+                  <TextBlock Grid.Column="2" Text="{Binding PagesText}" Classes="hint" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                </Grid>
               </Grid>
             </DataTemplate>
           </ListBox.ItemTemplate>
@@ -192,32 +263,99 @@
               <Button Grid.Column="2" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="Yeni..." Command="{Binding NewExcelCommand}" />
             </Grid>
 
-            <TextBlock Text="PDF dosyasının tam yolu" Classes="label" />
-            <TextBox Text="{Binding OpenPdfPath, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Watermark="Açık PDF yok" />
 
-            <TextBlock Text="Belge tarihi" Classes="label" />
-            <Grid ColumnDefinitions="*,4,Auto">
-              <TextBox Text="{Binding DocumentDateText}" Watermark="31.12.2025" />
-              <Button Name="DateButton" Grid.Column="2" Content="▾" Padding="8,5" ToolTip.Tip="Takvimden seç">
-                <Button.Flyout>
-                  <Flyout Placement="BottomEdgeAlignedRight">
-                    <Calendar Name="DateCalendar" SelectedDate="{Binding PickedDate}" />
-                  </Flyout>
-                </Button.Flyout>
-              </Button>
+            <Grid ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+              <TextBlock Text="Alanlar" Classes="label" Margin="0" VerticalAlignment="Center" />
+              <ToggleButton Grid.Column="1" Padding="8,3" Content="Alanları düzenle" IsChecked="{Binding IsEditingFields}"
+                            ToolTip.Tip="Alanları aç/kapat, yeniden adlandır, sırala, yeni alan ekle" />
             </Grid>
 
-            <TextBlock Text="Belge konusu" Classes="label" />
-            <TextBox Text="{Binding DocumentSubject}" />
+            <!-- Form -->
+            <StackPanel IsVisible="{Binding !IsEditingFields}">
+              <TextBlock Classes="hint" Margin="0,6,0,0" IsVisible="{Binding HasNoEnabledFields}"
+                         Text="Açık alan yok; kaydedilecek bir şey yok. Alanları açmak ya da eklemek için &quot;Alanları düzenle&quot;ye basın." />
+              <ItemsControl ItemsSource="{Binding Fields}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ExcelFieldViewModel">
+                    <StackPanel IsVisible="{Binding IsEnabled}">
+                      <TextBlock Text="{Binding Name}" Classes="label" IsVisible="{Binding !IsCheckbox}" />
+                      <TextBox IsVisible="{Binding IsPdfPath}" IsReadOnly="True" TextWrapping="Wrap" Watermark="Açık PDF yok"
+                               Text="{Binding $parent[ItemsControl].((vm:DocumentsViewModel)DataContext).OpenPdfPath, Mode=OneWay}" />
+                      <TextBox IsVisible="{Binding IsText}" Text="{Binding Text}" AcceptsReturn="{Binding Multiline}"
+                               TextWrapping="Wrap" Classes.multiline="{Binding Multiline}" />
+                      <Grid IsVisible="{Binding IsDate}" ColumnDefinitions="*,4,Auto">
+                        <TextBox Text="{Binding Text}" Watermark="31.12.2025" />
+                        <Button Grid.Column="2" Content="▾" Padding="8,5" ToolTip.Tip="Takvimden seç">
+                          <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                              <Calendar SelectedDate="{Binding PickedDate}" SelectedDatesChanged="OnFieldCalendarDateChanged" />
+                            </Flyout>
+                          </Button.Flyout>
+                        </Button>
+                      </Grid>
+                      <ComboBox IsVisible="{Binding IsChoice}" ItemsSource="{Binding Options}" SelectedItem="{Binding SelectedOption}"
+                                HorizontalAlignment="Stretch" PlaceholderText="Seçin" />
+                      <CheckBox IsVisible="{Binding IsCheckbox}" Content="{Binding Name}" IsChecked="{Binding IsChecked}" Margin="0,8,0,0" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
 
-            <TextBlock Text="Belge numarası" Classes="label" />
-            <TextBox Text="{Binding DocumentNumber}" />
-
-            <TextBlock Text="Destis numarası" Classes="label" />
-            <TextBox Text="{Binding DestisNumber}" />
-
-            <TextBlock Text="Açıklama" Classes="label" />
-            <TextBox Text="{Binding DocumentDescription}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" />
+            <!-- Alan düzenleyici -->
+            <StackPanel IsVisible="{Binding IsEditingFields}">
+              <TextBlock Classes="hint" Margin="0,6,0,0"
+                         Text="İşaretli alanlar formda görünür ve Excel'e yazılır. PDF yolu silinemez, istemiyorsanız işaretini kaldırın. Değerler, Excel'in ilk satırındaki aynı adlı sütuna yazılır; o adda sütun yoksa sona yeni sütun eklenir." />
+              <ItemsControl ItemsSource="{Binding Fields}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ExcelFieldViewModel">
+                    <Border Classes="field-editor">
+                      <StackPanel Spacing="4">
+                        <Grid ColumnDefinitions="Auto,*,2,Auto,2,Auto,2,Auto">
+                          <CheckBox IsChecked="{Binding IsEnabled}" MinWidth="0" Padding="4,0" ToolTip.Tip="Formda göster ve Excel'e yaz" />
+                          <TextBox Grid.Column="1" Text="{Binding Name}" Watermark="Alan adı" />
+                          <Button Grid.Column="3" Classes="icon" Content="▲" ToolTip.Tip="Yukarı taşı"
+                                  Command="{Binding $parent[ItemsControl].((vm:DocumentsViewModel)DataContext).MoveFieldUpCommand}" CommandParameter="{Binding}" />
+                          <Button Grid.Column="5" Classes="icon" Content="▼" ToolTip.Tip="Aşağı taşı"
+                                  Command="{Binding $parent[ItemsControl].((vm:DocumentsViewModel)DataContext).MoveFieldDownCommand}" CommandParameter="{Binding}" />
+                          <Button Grid.Column="7" Classes="icon" Content="✕" ToolTip.Tip="Alanı sil" IsVisible="{Binding CanRemove}"
+                                  Command="{Binding $parent[ItemsControl].((vm:DocumentsViewModel)DataContext).RemoveFieldCommand}" CommandParameter="{Binding}" />
+                        </Grid>
+                        <TextBlock Text="{Binding NameError}" Classes="hint" Foreground="#E53935" Opacity="1"
+                                   IsVisible="{Binding NameError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                        <TextBlock Text="{Binding KindText}" Classes="hint" />
+                        <CheckBox IsVisible="{Binding IsText}" Content="Çok satırlı" IsChecked="{Binding Multiline}" />
+                        <TextBox IsVisible="{Binding IsChoice}" Text="{Binding OptionsText}" AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="60" Watermark="Seçenekler: her satıra bir tane" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Grid ColumnDefinitions="*,6,Auto" Margin="0,8,0,0">
+                <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="+ Alan ekle ▾">
+                  <Button.Flyout>
+                    <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                      <MenuItem Header="Metin" Command="{Binding AddFieldCommand}" CommandParameter="{x:Static vm:ExcelFieldKind.Text}" />
+                      <MenuItem Header="Tarih" Command="{Binding AddFieldCommand}" CommandParameter="{x:Static vm:ExcelFieldKind.Date}" />
+                      <MenuItem Header="Seçim listesi" Command="{Binding AddFieldCommand}" CommandParameter="{x:Static vm:ExcelFieldKind.Choice}" />
+                      <MenuItem Header="Onay kutusu" Command="{Binding AddFieldCommand}" CommandParameter="{x:Static vm:ExcelFieldKind.Checkbox}" />
+                    </MenuFlyout>
+                  </Button.Flyout>
+                </Button>
+                <Button Name="ResetFieldsButton" Grid.Column="2" Content="Varsayılan"
+                        ToolTip.Tip="Alanları ilk haline döndür (PDF yolu, Belge tarihi, konusu, numarası, Destis numarası, Açıklama)">
+                  <Button.Flyout>
+                    <Flyout Placement="TopEdgeAlignedRight">
+                      <StackPanel Width="230" Spacing="8">
+                        <TextBlock TextWrapping="Wrap" Text="Alanlar ilk haline dönecek; eklediğiniz alanlar silinir. Excel dosyası değişmez." />
+                        <Button Name="ResetFieldsConfirm" HorizontalAlignment="Right" Content="Varsayılana dön" Command="{Binding ResetFieldsCommand}" />
+                      </StackPanel>
+                    </Flyout>
+                  </Button.Flyout>
+                </Button>
+              </Grid>
+            </StackPanel>
           </StackPanel>
         </ScrollViewer>
       </DockPanel>

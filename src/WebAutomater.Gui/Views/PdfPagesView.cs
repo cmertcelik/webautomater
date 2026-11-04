@@ -73,7 +73,7 @@ public sealed class PdfPagesView : Control
     private readonly Dictionary<int, CachedPage> _cache = [];
     private readonly Dictionary<int, PdfTextLayout> _layouts = [];
     private readonly HashSet<(int Page, int PixelWidth)> _failed = [];
-    private readonly Lock _wantedLock = new();
+    private readonly object _wantedLock = new();
     private readonly SemaphoreSlim _signal = new(0);
     private List<RenderRequest> _wanted = [];
     private RenderRequest? _inFlight;

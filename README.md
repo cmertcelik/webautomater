@@ -39,7 +39,7 @@ Tarayıcıyı başlatma, beklemeler ve tıklama/yazma işlemleri hâlâ Playwrig
 
 ## Gereksinimler
 
-- Geliştirme için [.NET 10 SDK](https://dotnet.microsoft.com/download). Yayınlanmış sürümde .NET kurulu olması gerekmez (self-contained).
+- Geliştirme için [.NET 8 SDK](https://dotnet.microsoft.com/download) ya da daha yenisi (9, 10). Proje .NET 8'i hedefler ve C# 12 ile yazılır; daha yeni bir SDK ile derlense de .NET 8 SDK'sında açılmayacak bir şey eklenmez. Yalnızca daha yeni bir .NET kuruluysa uygulama onunla çalışır. Çözüm dosyası `WebAutomater.sln` (Visual Studio 2022 ve `dotnet` komutu açar). Yayınlanmış sürümde .NET kurulu olması gerekmez (self-contained).
 - Tarayıcı: ilk kayıt/oynatmada Playwright Chromium'u kendiliğinden indirir (yaklaşık 150 MB, bir kez). İsterseniz önceden indirebilirsiniz: `wa install`. Bilgisayarda yüklü Chrome veya Edge'i de kullanabilirsiniz (arayüzde tarayıcı seçimi, terminalde `--channel chrome`).
 - Linux'ta tarayıcının sistem kütüphaneleri için bir kez: `wa install --with-deps` (yönetici yetkisi ister).
 
@@ -63,13 +63,18 @@ dotnet run --project src/WebAutomater.Gui
 Soldan sağa dört panel vardır; aralarındaki çizgiler sürüklenerek genişlikler değiştirilebilir.
 
 1. **Dosyalar:** **Klasör seç...** ile klasörü seçin. Alt klasörler ok ya da çift tıklamayla açılır (klavyede sağ/sol ok, Enter). Seçilen klasör sonraki açılışta hatırlanır.
+   - **Yeni klasör:** Seçili klasörün içinde (dosya seçiliyse onun klasöründe, hiçbir şey seçili değilse ana klasörde) yeni klasör oluşturur.
+   - **Taşıma:** Dosya ya da klasörü sürükleyip bir klasörün üzerine bırakın. Bir dosyanın üzerine bırakınca o dosyanın klasörüne, listedeki boş alana bırakınca ana klasöre taşınır. Kapalı bir klasörün üzerinde biraz bekleyince klasör açılır. Hedefte aynı adda bir öğe varsa taşıma yapılmaz. Açık PDF taşınırsa görüntüleyici açık kalır, yolu güncellenir.
 2. **PDF görüntüleyici:** PDF'e tıklayınca açılır. Ctrl + tekerlek yakınlaştırır; **Sığdır** sayfayı alan genişliğine oturtur. PageUp/PageDown/Home/End çalışır.
    - **Yazı seçip kopyalama:** Fareyle sürükleyerek yazıyı seçin (sayfalar arasında da; fare alanın dışına çıkınca sayfa kendiliğinden kayar). Çift tıklama kelimeyi, üç kez tıklama satırı seçer; Shift + tıklama seçimi uzatır. **Ctrl+C** kopyalar, **Ctrl+A** tüm belgeyi seçer, **Esc** seçimi kaldırır. Sağ tık menüsünde de **Kopyala** ve **Tümünü seç** var. Taranmış (görüntü) sayfalarda seçilecek yazı yoktur.
 3. **Bulunan Numaralar:** 11 haneli sayılar T.C. kimlik, 10 haneli sayılar vergi numarası olarak listelenir. Aynı numara tek satırda, geçtiği sayfalarla birlikte görünür; çift tıklama o sayfaya gider.
    - **✓** kontrol hanesi doğru, **?** hane sayısı uyuyor ama kontrol hanesi tutmuyor (telefon, belge numarası olabilir). **Yalnızca doğrulananlar** bunları gizler.
    - Bulunan numaralar sayfada renklendirilir: sarı doğrulanmış, turuncu doğrulanmamış. Bu yalnızca ekrandaki görünümdür, PDF dosyası değişmez. Görüntüleyicideki **Vurgula** düğmesi kapatıp açar.
+   - **Hepsini bul:** Yalnızca açık PDF'te değil, seçilen klasördeki (alt klasörler dahil) tüm PDF'lerde arar. Her numara bir kez listelenir; altında geçtiği ilk dosya ve kaç dosyada daha geçtiği yazar. Tüm dosyaları görmek için satırın üzerinde bekleyin; çift tıklama ilk dosyayı o sayfada açar. Tarama sürerken düğme **Durdur** olur. **✕** toplu sonuçları kapatıp açık belgenin numaralarına döner. Açılamayan ve metin katmanı olmayan PDF'ler uyarı satırında sayılır.
    - **Tümünü kopyala** ya da seçip Ctrl+C. Numaralar alt alta kopyalanır, Excel'e yapıştırınca her biri ayrı satıra gelir. Excel baştaki sıfırı siler (`0123456789` gibi vergi numaraları); korumak için hedef sütunu önce Metin biçimine alın.
-4. **Excel'e Kaydet:** **Seç...** ile mevcut dosyayı ya da **Yeni...** ile yeni dosyayı belirleyin, alanları doldurup **Excel'e kaydet**'e basın. Satır ilk çalışma sayfasının sonuna eklenir. Sütun sırası: PDF yolu, belge tarihi, belge konusu, belge numarası, destis numarası, açıklama. Kayıttan sonra form temizlenir; hata olursa girilen bilgiler korunur.
+4. **Excel'e Kaydet:** **Seç...** ile mevcut dosyayı ya da **Yeni...** ile yeni dosyayı belirleyin, alanları doldurup **Excel'e kaydet**'e basın. Satır ilk çalışma sayfasının sonuna eklenir. PDF dosya yolu da bir alandır: kendiliğinden doldurulur, silinemez ama istemiyorsanız kapatabilir, yeniden adlandırabilir ya da sırasını değiştirebilirsiniz. Kayıttan sonra form temizlenir; hata olursa girilen bilgiler korunur.
+   - **Alanları düzenle:** Alanları açıp kapatın, yeniden adlandırın, ▲▼ ile sıralayın ya da silin. **+ Alan ekle** ile dört türde alan eklenir: **Metin** (istenirse çok satırlı), **Tarih** (elle ya da takvimden), **Seçim listesi** (seçenekleri her satıra bir tane yazın) ve **Onay kutusu** (Excel'e "Evet"/"Hayır" yazılır). **Varsayılan** ilk alanlara döner. Alanlar sonraki açılışta hatırlanır.
+   - Değerler, Excel'in ilk satırındaki **aynı adlı sütuna** yazılır (büyük/küçük harf önemsiz); o adda sütun yoksa sona yeni sütun eklenir. Böylece alan sırasını değiştirmek ya da yeni alan eklemek eski kayıtları bozmaz. Bir alanı yeniden adlandırırsanız Excel'de yeni bir sütun açılır.
 
 Sınırlar:
 
