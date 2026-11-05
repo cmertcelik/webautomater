@@ -154,6 +154,7 @@ public sealed partial class DocumentsViewModel : ObservableObject
 
     private CancellationTokenSource? _openCts;
     private CancellationTokenSource? _bulkCts;
+    private CancellationTokenSource? _groupCts;
     private string? _requestedPath;
     private bool _saving;
     private bool _loadingFields;
@@ -163,6 +164,12 @@ public sealed partial class DocumentsViewModel : ObservableObject
         var settings = LoadSettings();
         _excelPath = settings.ExcelPath;
         LoadFields(settings.Fields is { Count: > 0 } fields ? WithPdfPath(fields) : ExcelFieldViewModel.Defaults);
+        _caseMinDigits = Math.Clamp(settings.CaseMinDigits, 1, 20);
+        _caseMaxDigits = Math.Clamp(settings.CaseMaxDigits, _caseMinDigits, 20);
+        _caseSubfolders = settings.CaseSubfolders;
+        foreach (var tag in settings.Tags ?? [])
+            AttachTag(new GroupTagViewModel(tag));
+        ValidateTags();
         if (!string.IsNullOrEmpty(settings.RootFolder))
             // Dispatcher üzerinden: await sonrası devam da arayüz iş parçacığında olsun.
             Dispatcher.UIThread.Post(() => _ = RestoreRootAsync(settings.RootFolder));
@@ -179,14 +186,14 @@ public sealed partial class DocumentsViewModel : ObservableObject
     public BulkObservableCollection<FileNode> Nodes { get; } = [];
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasRoot), nameof(NewFolderLocation))]
-    [NotifyCanExecuteChangedFor(nameof(FindAllCommand))]
+    [NotifyPropertyChangedFor(nameof(HasRoot), nameof(NewFolderLocation), nameof(GroupLocation), nameof(AutoGroupTip))]
+    [NotifyCanExecuteChangedFor(nameof(FindAllCommand), nameof(AutoGroupCommand))]
     private string? _rootFolder;
 
     public bool HasRoot => RootFolder is not null;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(NewFolderLocation))]
+    [NotifyPropertyChangedFor(nameof(NewFolderLocation), nameof(GroupLocation), nameof(AutoGroupTip))]
     private FileNode? _selectedNode;
 
     [ObservableProperty]
@@ -434,25 +441,275 @@ public sealed partial class DocumentsViewModel : ObservableObject
             return;
         }
 
-        // Açık belge ve toplu sonuçlar yeni yolu göstersin.
         var oldPath = source.FullPath;
-        if (Document is { } doc && FileOps.Remap(doc.Path, oldPath, destination) is { } newDocPath)
-        {
-            doc.UpdatePath(newDocPath);
-            OnPropertyChanged(nameof(WindowTitle));
-            OnPropertyChanged(nameof(OpenPdfPath));
-        }
-
-        if (_requestedPath is not null && FileOps.Remap(_requestedPath, oldPath, destination) is { } newRequested)
-            _requestedPath = newRequested;
-        foreach (var row in _bulkRows.Concat(_docRows))
-            row.Relocate(oldPath, destination);
+        Relocate(oldPath, destination);
 
         var select = SelectedNode?.FullPath is { } selected
             ? FileOps.Remap(selected, oldPath, destination) ?? selected
             : null;
         string[] expand = FileOps.SamePath(targetFolder, RootFolder) ? [] : [targetFolder];
         await ReloadTreeAsync(expand, select, p => FileOps.Remap(p, oldPath, destination) ?? p);
+    }
+
+    /// <summary>Taşınan öğeden sonra açık belge ve toplu sonuçlar yeni yolu göstersin.</summary>
+    private void Relocate(string oldPath, string newPath)
+    {
+        if (Document is { } doc && FileOps.Remap(doc.Path, oldPath, newPath) is { } newDocPath)
+        {
+            doc.UpdatePath(newDocPath);
+            OnPropertyChanged(nameof(WindowTitle));
+            OnPropertyChanged(nameof(OpenPdfPath));
+        }
+
+        if (_requestedPath is not null && FileOps.Remap(_requestedPath, oldPath, newPath) is { } newRequested)
+            _requestedPath = newRequested;
+        foreach (var row in _bulkRows.Concat(_docRows))
+            row.Relocate(oldPath, newPath);
+    }
+
+    // ---------- Otomatik gruplama ----------
+
+    /// <summary>Etiketler; sıra önceliktir (bir dosya birden çok etikete uyarsa üstteki seçilir).</summary>
+    public ObservableCollection<GroupTagViewModel> Tags { get; } = [];
+
+    /// <summary>Taramadan sonra, taşımadan önce önizlemeyi gösterir; kullanıcı onaylarsa true. Görünüm tarafından atanır.</summary>
+    public Func<GroupingPreviewViewModel, Task<bool>>? ConfirmGrouping { get; set; }
+
+    [ObservableProperty]
+    private int _caseMinDigits = 5;
+
+    [ObservableProperty]
+    private int _caseMaxDigits = 7;
+
+    /// <summary>Etiket klasörünün içinde her dosya numarası için ayrı alt klasör.</summary>
+    [ObservableProperty]
+    private bool _caseSubfolders = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutoGroupText))]
+    private bool _isGrouping;
+
+    [ObservableProperty]
+    private string _groupStatus = "";
+
+    [ObservableProperty]
+    private string? _groupStatusTip;
+
+    public string AutoGroupText => IsGrouping ? "Durdur" : "Otomatik grupla";
+
+    public bool HasNoTags => Tags.Count == 0;
+
+    /// <summary>Gruplanacak klasör: seçili klasör, yoksa ana klasör (seçili PDF'in klasörü değil; o bir etiket klasörü olabilir).</summary>
+    public string? GroupLocation => SelectedNode is { IsDirectory: true } dir ? dir.FullPath : RootFolder;
+
+    public string AutoGroupTip => GroupLocation is { } location
+        ? $"PDF'lerin içinde etiket kelimelerini arar, aynı dosya numaralı dosyalarla birlikte klasörlere ayırır. Taşımadan önce önizleme gösterilir.\nKlasör: {location}"
+        : "Önce bir klasör seçin.";
+
+    public string TagsButtonText => Tags.Count == 0 ? "Etiketler" : $"Etiketler ({Tags.Count})";
+
+    partial void OnCaseMinDigitsChanged(int value)
+    {
+        if (CaseMaxDigits < value)
+            CaseMaxDigits = value;
+        SaveSettings();
+    }
+
+    partial void OnCaseMaxDigitsChanged(int value)
+    {
+        if (CaseMinDigits > value)
+            CaseMinDigits = value;
+        SaveSettings();
+    }
+
+    partial void OnCaseSubfoldersChanged(bool value) => SaveSettings();
+
+    private void AttachTag(GroupTagViewModel tag)
+    {
+        tag.DefinitionChanged += OnTagChanged;
+        Tags.Add(tag);
+    }
+
+    private void OnTagChanged()
+    {
+        ValidateTags();
+        SaveSettings();
+    }
+
+    private void OnTagsListChanged()
+    {
+        ValidateTags();
+        OnPropertyChanged(nameof(HasNoTags));
+        OnPropertyChanged(nameof(TagsButtonText));
+        SaveSettings();
+    }
+
+    /// <summary>Etiket adı klasör adı olacağı için boş, geçersiz ya da yinelenen olamaz.</summary>
+    private bool ValidateTags()
+    {
+        var ok = true;
+        var seen = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
+        foreach (var tag in Tags)
+        {
+            var name = tag.Name.Trim();
+            tag.Error = name.Length == 0 ? "Etiket adı boş olamaz."
+                : name is "." or ".." || name.IndexOfAny(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) >= 0 ||
+                  name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                    ? "Klasör adında şu karakterler kullanılamaz: \\ / : * ? \" < > |"
+                : name.All(char.IsAsciiDigit) ? "Etiket adı yalnızca rakam olamaz (dosya numarası klasörleriyle karışır)."
+                : !seen.Add(name) ? "Bu adda başka bir etiket var."
+                : tag.Keywords.Count == 0 ? "En az bir aranacak kelime yazın."
+                : "";
+            ok &= !tag.HasError;
+        }
+
+        return ok;
+    }
+
+    [RelayCommand]
+    private void AddTag()
+    {
+        var name = "Yeni etiket";
+        for (var i = 2; Tags.Any(t => string.Equals(t.Name.Trim(), name, StringComparison.CurrentCultureIgnoreCase)); i++)
+            name = $"Yeni etiket {i}";
+        AttachTag(new GroupTagViewModel(new GroupTagDefinition(name, [])));
+        OnTagsListChanged();
+    }
+
+    [RelayCommand]
+    private void RemoveTag(GroupTagViewModel? tag)
+    {
+        if (tag is null)
+            return;
+        tag.DefinitionChanged -= OnTagChanged;
+        Tags.Remove(tag);
+        OnTagsListChanged();
+    }
+
+    [RelayCommand]
+    private void MoveTagUp(GroupTagViewModel? tag) => MoveTag(tag, -1);
+
+    [RelayCommand]
+    private void MoveTagDown(GroupTagViewModel? tag) => MoveTag(tag, 1);
+
+    private void MoveTag(GroupTagViewModel? tag, int delta)
+    {
+        if (tag is null)
+            return;
+        var index = Tags.IndexOf(tag);
+        var target = index + delta;
+        if (index < 0 || target < 0 || target >= Tags.Count)
+            return;
+        Tags.Move(index, target);
+        OnTagsListChanged();
+    }
+
+    private bool CanAutoGroup() => RootFolder is not null;
+
+    /// <summary>
+    /// Klasördeki PDF'lerin içinde etiket kelimelerini arar, dosya numaralarına göre birleştirir, önizleme gösterip onaylanırsa taşır.
+    /// Tarama sürerken basılırsa durdurur.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanAutoGroup), AllowConcurrentExecutions = true)]
+    private async Task AutoGroupAsync()
+    {
+        if (_groupCts is not null)
+        {
+            _groupCts.Cancel();
+            return;
+        }
+
+        if (GroupLocation is not { } folder)
+            return;
+        GroupStatusTip = null;
+        if (!ValidateTags())
+        {
+            GroupStatus = "Etiket ayarlarındaki hataları düzeltin.";
+            return;
+        }
+
+        var tags = Tags.Select(t => t.ToTag()).ToList();
+        var options = new GroupingOptions(CaseMinDigits, CaseMaxDigits, CaseSubfolders);
+        var matcher = new TagMatcher(tags);
+        var cts = _groupCts = new CancellationTokenSource();
+        var token = cts.Token;
+        IsGrouping = true;
+        TreeMessage = "";
+        GroupStatus = "PDF dosyaları aranıyor...";
+        var warnings = new List<string>();
+        try
+        {
+            var (files, existing) = await Task.Run(() =>
+                (GroupingPlanner.FindCandidates(folder, options), GroupingPlanner.FindExistingCases(folder, tags, options)), token);
+            if (files.Count == 0)
+            {
+                GroupStatus = "Bu klasörde gruplanacak PDF yok.";
+                return;
+            }
+
+            var candidates = new List<GroupingCandidate>();
+            for (var i = 0; i < files.Count; i++)
+            {
+                token.ThrowIfCancellationRequested();
+                GroupStatus = $"İnceleniyor... {i + 1}/{files.Count}: {Path.GetFileName(files[i])}";
+                var file = files[i];
+                var scan = matcher.IsEmpty
+                    ? new FileTagScan(file, [], false)
+                    : await Task.Run(() => matcher.ScanFile(file, token), token);
+                if (scan.Error is not null)
+                    warnings.Add($"{Path.GetFileName(file)}: açılamadı ({scan.Error}); yalnızca dosya numarasına göre gruplanır.");
+                else if (scan.HasNoText)
+                    warnings.Add($"{Path.GetFileName(file)}: metin katmanı yok (taranmış görüntü olabilir); yalnızca dosya numarasına göre gruplanır.");
+                candidates.Add(new GroupingCandidate(file, scan.Hits));
+            }
+
+            var plan = GroupingPlanner.Plan(folder, candidates, tags, options, existing);
+            GroupStatus = "";
+            if (ConfirmGrouping is null || !await ConfirmGrouping(new GroupingPreviewViewModel(plan, warnings)) || plan.Moves.Count == 0)
+            {
+                GroupStatus = plan.Moves.Count == 0 ? "Taşınacak dosya bulunamadı." : "Gruplama iptal edildi; hiçbir dosya taşınmadı.";
+                return;
+            }
+
+            GroupStatus = $"{plan.Moves.Count} dosya taşınıyor...";
+            var result = await Task.Run(() => GroupingPlanner.Apply(plan, CancellationToken.None));
+            foreach (var (source, destination) in result.Moved)
+                Relocate(source, destination);
+
+            GroupStatus = $"{result.Moved.Count} dosya {result.Moved.Select(m => Path.GetDirectoryName(m.Destination)).Distinct().Count()} klasörde toplandı." +
+                          (result.Failed.Count > 0 ? $" {result.Failed.Count} dosya taşınamadı; ayrıntı için üzerinde bekleyin." : "");
+            GroupStatusTip = result.Failed.Count > 0 ? string.Join(Environment.NewLine, result.Failed.Take(30)) : null;
+
+            // Gruplanan klasör ve oluşan etiket klasörleri açık gelsin.
+            var expand = result.Moved.Select(m => Path.GetDirectoryName(m.Destination)!)
+                .SelectMany(d => Ancestors(d, folder))
+                .Append(folder)
+                .Where(d => !FileOps.SamePath(d, RootFolder))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            await ReloadTreeAsync(expand);
+        }
+        catch (OperationCanceledException)
+        {
+            GroupStatus = "Gruplama durduruldu; hiçbir dosya taşınmadı.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            GroupStatus = $"Klasör okunamadı: {ex.Message}";
+        }
+        finally
+        {
+            _groupCts = null;
+            IsGrouping = false;
+            cts.Dispose();
+        }
+    }
+
+    /// <summary><paramref name="path"/> ve <paramref name="stop"/>'a kadarki üst klasörleri (stop hariç).</summary>
+    private static IEnumerable<string> Ancestors(string path, string stop)
+    {
+        for (var dir = path; dir is not null && !FileOps.SamePath(dir, stop) && FileOps.IsInside(dir, stop); dir = Path.GetDirectoryName(dir))
+            yield return dir;
     }
 
     // ---------- PDF ----------
@@ -1103,7 +1360,11 @@ public sealed partial class DocumentsViewModel : ObservableObject
     private sealed record Settings(
         string? RootFolder = null,
         string? ExcelPath = null,
-        IReadOnlyList<ExcelFieldDefinition>? Fields = null);
+        IReadOnlyList<ExcelFieldDefinition>? Fields = null,
+        IReadOnlyList<GroupTagDefinition>? Tags = null,
+        int CaseMinDigits = 5,
+        int CaseMaxDigits = 7,
+        bool CaseSubfolders = true);
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WebAutomater", "belge-tarama.json");
@@ -1125,7 +1386,8 @@ public sealed partial class DocumentsViewModel : ObservableObject
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            var settings = new Settings(RootFolder, ExcelPath, Fields.Select(f => f.ToDefinition()).ToList());
+            var settings = new Settings(RootFolder, ExcelPath, Fields.Select(f => f.ToDefinition()).ToList(),
+                Tags.Select(t => t.ToDefinition()).ToList(), CaseMinDigits, CaseMaxDigits, CaseSubfolders);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -1138,6 +1400,7 @@ public sealed partial class DocumentsViewModel : ObservableObject
     {
         _openCts?.Cancel();
         _bulkCts?.Cancel();
+        _groupCts?.Cancel();
         Document?.Dispose();
     }
 }

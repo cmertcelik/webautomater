@@ -89,7 +89,21 @@ public partial class DocumentsView : UserControl
             _highlightSource.HighlightsChanged -= Pages.InvalidateVisual;
         _highlightSource = ViewModel;
         if (_highlightSource is not null)
+        {
             _highlightSource.HighlightsChanged += Pages.InvalidateVisual;
+            _highlightSource.ConfirmGrouping = ConfirmGroupingAsync;
+        }
+    }
+
+    private async Task<bool> ConfirmGroupingAsync(GroupingPreviewViewModel preview)
+    {
+        var window = new GroupingPreviewWindow { DataContext = preview };
+        if (TopLevel.GetTopLevel(this) is Window owner)
+            return await window.ShowDialog<bool>(owner);
+        var closed = new TaskCompletionSource<bool>();
+        window.Closed += (_, _) => closed.TrySetResult(false);
+        window.Show();
+        return await closed.Task;
     }
 
     private DocumentsViewModel? ViewModel => DataContext as DocumentsViewModel;
