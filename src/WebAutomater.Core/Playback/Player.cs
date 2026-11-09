@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Playwright;
 using WebAutomater.Core.Browsers;
+using WebAutomater.Core.Diagnostics;
 using WebAutomater.Core.Models;
 using WebAutomater.Core.Text;
 
@@ -22,8 +23,38 @@ public sealed class Player
 
     private sealed record PlanItem(int Iteration, int? RowNumber, IReadOnlyDictionary<string, string>? Row);
 
+    // Sayfada açılmak istenen dosya seçme pencereleri. Dinleyici olduğu için Playwright işletim sisteminin
+    // penceresini açtırmaz (görünür oynatmada ekranda asılı kalmaz); yükleme adımı bunu kullanabilir.
+    private readonly Dictionary<IPage, IFileChooser> _fileChoosers = [];
+
+    private void WatchFileChoosers(IPage page)
+    {
+        page.FileChooser += (_, chooser) =>
+        {
+            lock (_fileChoosers)
+                _fileChoosers[page] = chooser;
+        };
+        page.FrameNavigated += (_, frame) =>
+        {
+            if (frame == page.MainFrame)
+                lock (_fileChoosers)
+                    _fileChoosers.Remove(page);
+        };
+        page.Close += (_, _) =>
+        {
+            lock (_fileChoosers)
+                _fileChoosers.Remove(page);
+        };
+    }
+
+    private IFileChooser? TakeFileChooser(IPage page)
+    {
+        lock (_fileChoosers)
+            return _fileChoosers.Remove(page, out var chooser) ? chooser : null;
+    }
+
     /// <summary>Tekrarlar arasında korunabilen tarayıcı durumu.</summary>
-    private sealed class Session(IBrowserContext context)
+    private sealed class Session(IBrowserContext context, Action<IPage>? onNewPage = null)
     {
         public IBrowserContext Context { get; } = context;
         public List<IPage> Pages { get; } = [];
@@ -38,22 +69,29 @@ public sealed class Player
         {
             lock (Pages)
             {
-                if (!Pages.Contains(page))
-                    Pages.Add(page);
+                if (Pages.Contains(page))
+                    return;
+                Pages.Add(page);
             }
+
+            onNewPage?.Invoke(page);
         }
     }
+
+    private const string LogArea = "Oynatma";
 
     public async Task<PlaybackResult> RunAsync(
         Scenario scenario, PlaybackOptions options, Action<PlaybackEvent>? onEvent = null, CancellationToken ct = default)
     {
         var result = new PlaybackResult();
-        var problems = ScenarioValidator.Validate(scenario, options.Data);
+        var problems = ScenarioValidator.Validate(scenario, options.Data, UploadFiles.BaseDirectory(options));
         if (problems.Count > 0)
             throw new InvalidOperationException("Senaryo oynatılamıyor:\n- " + string.Join("\n- ", problems));
 
         var plan = BuildPlan(options);
         var total = plan.Count;
+        AppLog.Info(LogArea, $"\"{scenario.Name}\" oynatılıyor: {total} tekrar" +
+                             (options.Data is { } data ? $", veri: {Path.GetFileName(data.Path)}" : "") + (options.Headless ? ", görünmez" : "") + ".");
         void Emit(PlaybackEvent e) => onEvent?.Invoke(e);
 
         using var playwright = await Playwright.CreateAsync();
@@ -117,6 +155,8 @@ public sealed class Player
         }
 
         result.Cancelled = ct.IsCancellationRequested;
+        AppLog.Info(LogArea, $"\"{scenario.Name}\" bitti: {result.Iterations.Count(i => i.Success)}/{result.Iterations.Count} tekrar başarılı" +
+                             (result.Cancelled ? " (durduruldu)." : "."));
         return result;
     }
 
@@ -143,9 +183,9 @@ public sealed class Player
         return plan;
     }
 
-    private static async Task<Session> NewSessionAsync(IBrowser browser, Scenario scenario, PlaybackOptions options)
+    private async Task<Session> NewSessionAsync(IBrowser browser, Scenario scenario, PlaybackOptions options)
     {
-        var session = new Session(await NewContextAsync(browser, scenario, options));
+        var session = new Session(await NewContextAsync(browser, scenario, options), WatchFileChoosers);
         session.Context.Page += (_, page) => session.Track(page);
         return session;
     }
@@ -283,6 +323,11 @@ public sealed class Player
             {
                 var cancelled = ct.IsCancellationRequested;
                 var message = cancelled ? "İptal edildi" : CleanMessage(ex);
+                // Beklenen adım hataları (öğe bulunamadı, zaman aşımı) kısa yazılır; beklenmeyenler ayrıntısıyla.
+                if (!cancelled)
+                    AppLog.Write(ex is StepFailedException or TimeoutException or PlaywrightException ? LogLevel.Warning : LogLevel.Error,
+                        LogArea, $"Tekrar {item.Iteration}{(item.RowNumber is { } r ? $" (satır {r})" : "")}, adım {i + 1} ({step.Type}): {message}",
+                        ex is StepFailedException or TimeoutException ? null : ex);
 
                 if (!cancelled && flow.Next(step, StepPort.Error) is { } planB)
                 {
@@ -449,7 +494,7 @@ public sealed class Player
     public async Task<string?> ReplayPathAsync(
         IPage firstPage, IReadOnlyList<(Step Step, StepPort Port)> path, PlaybackOptions options, Action<string> info, CancellationToken ct = default)
     {
-        var session = new Session(firstPage.Context);
+        var session = new Session(firstPage.Context, WatchFileChoosers);
         session.Track(firstPage);
         foreach (var existing in firstPage.Context.Pages)
             session.Track(existing);
@@ -543,6 +588,12 @@ public sealed class Player
                 return;
         }
 
+        if (step.Type == StepType.Upload)
+        {
+            await UploadAsync(page, step, value, item, options, timeoutMs, info, ct);
+            return;
+        }
+
         var frame = await GetFrameAsync(page, step, timeoutMs, ct);
         var target = await ResolveTargetAsync(frame, step, value, item, timeoutMs, ct);
 
@@ -585,18 +636,91 @@ public sealed class Player
                     : ValueResolver.IsTruthy(value);
                 await SetCheckedAsync(target, check);
                 break;
-            case StepType.Upload:
-                var files = (value ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                var missing = files.Where(f => !File.Exists(f)).ToList();
-                if (missing.Count > 0)
-                    throw new StepFailedException($"Yüklenecek dosya bulunamadı: {string.Join(", ", missing)} (adımda tam dosya yolunu girin)");
-                await target.SetInputFilesAsync(files);
-                break;
             default:
                 throw new StepFailedException($"Desteklenmeyen adım türü: {step.Type}");
         }
 
         await navigation.WaitAsync(step, options, info, ct);
+    }
+
+    /// <summary>
+    /// Dosya yükler. Önce kayıtlı dosya girdisine doğrudan yazılır (gizli girdilerde de çalışır, pencere açılmaz).
+    /// Girdi sayfada yoksa (site girdiyi tıklamayla anlık oluşturuyorsa) önceki adımın açtırdığı dosya seçme penceresi kullanılır.
+    /// </summary>
+    private async Task UploadAsync(
+        IPage page, Step step, string? value, PlanItem item, PlaybackOptions options, int timeoutMs, Action<string> info, CancellationToken ct)
+    {
+        var resolved = UploadFiles.Resolve(value, UploadFiles.BaseDirectory(options));
+        if (resolved.Missing.Count > 0)
+            throw new StepFailedException($"Yüklenecek dosya bulunamadı: {string.Join(", ", resolved.Missing)}");
+        var files = resolved.Files;
+        if (files.Count == 0)
+            info("Yüklenecek dosya yok (değer boş); dosya seçimi temizlendi.");
+        else
+            info($"Yükleniyor: {string.Join(", ", files.Select(Path.GetFileName))}");
+
+        using var navigation = new NavigationWatcher(page);
+        if (step.Selectors.Count == 0)
+        {
+            var chooser = TakeFileChooser(page) ?? await WaitForFileChooserAsync(page, timeoutMs, ct)
+                ?? throw new StepFailedException(
+                    $"Dosya seçme penceresi {timeoutMs / 1000.0:0.#} sn içinde açılmadı. Bir önceki adım dosya seçme butonuna tıklamalı.");
+            await SetChooserFilesAsync(chooser, files);
+        }
+        else
+        {
+            ILocator target;
+            try
+            {
+                var frame = await GetFrameAsync(page, step, timeoutMs, ct);
+                target = await ResolveTargetAsync(frame, step, value, item, timeoutMs, ct);
+            }
+            catch (StepFailedException) when (TakeFileChooser(page) is { } chooser)
+            {
+                await SetChooserFilesAsync(chooser, files);
+                await navigation.WaitAsync(step, options, info, ct);
+                return;
+            }
+
+            try
+            {
+                await target.SetInputFilesAsync(files);
+            }
+            catch (PlaywrightException ex) when (ex.Message.Contains("Non-multiple", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new StepFailedException($"Bu alana tek dosya yüklenebilir ama {files.Count} dosya verildi: {string.Join(", ", files.Select(Path.GetFileName))}", ex);
+            }
+            catch (PlaywrightException ex) when (ex.Message.Contains("not an HTMLInputElement", StringComparison.OrdinalIgnoreCase) ||
+                                                 ex.Message.Contains("Node is not an", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new StepFailedException("Hedef öğe bir dosya girdisi değil. Kaydı yeniden alın ya da seçiciyi input[type=file] öğesine yöneltin.", ex);
+            }
+
+            // Kullanılmayan pencere sonraki yükleme adımına kalmasın.
+            TakeFileChooser(page);
+        }
+
+        await navigation.WaitAsync(step, options, info, ct);
+    }
+
+    private static async Task SetChooserFilesAsync(IFileChooser chooser, IReadOnlyList<string> files)
+    {
+        if (!chooser.IsMultiple && files.Count > 1)
+            throw new StepFailedException($"Bu alana tek dosya yüklenebilir ama {files.Count} dosya verildi: {string.Join(", ", files.Select(Path.GetFileName))}");
+        await chooser.SetFilesAsync(files);
+    }
+
+    private async Task<IFileChooser?> WaitForFileChooserAsync(IPage page, int timeoutMs, CancellationToken ct)
+    {
+        var watch = Stopwatch.StartNew();
+        while (watch.ElapsedMilliseconds < timeoutMs)
+        {
+            if (TakeFileChooser(page) is { } chooser)
+                return chooser;
+            await Task.Delay(PollIntervalMs, ct);
+        }
+
+        return null;
     }
 
     // Görsel olarak gizlenmiş (özel tasarımlı) onay kutularında Playwright tıklayamaz;

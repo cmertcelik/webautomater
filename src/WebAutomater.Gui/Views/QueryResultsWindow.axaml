@@ -1,0 +1,62 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:WebAutomater.Gui.ViewModels"
+        x:Class="WebAutomater.Gui.Views.QueryResultsWindow"
+        x:DataType="vm:QueryRunViewModel"
+        Title="{Binding WindowTitle}"
+        Width="860" Height="560" MinWidth="480" MinHeight="300"
+        WindowStartupLocation="CenterOwner">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.hint">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Opacity" Value="0.65" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="ListBox.results > ListBoxItem">
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+  </Window.Styles>
+
+  <DockPanel Margin="12">
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" />
+      <Button Grid.Column="1" Content="Durdur" Command="{Binding StopCommand}" IsVisible="{Binding IsRunning}" />
+    </Grid>
+
+    <Grid ColumnDefinitions="230,8,*">
+      <ListBox Classes="results" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:QueryResultRow">
+            <Grid ColumnDefinitions="Auto,6,*" RowDefinitions="Auto,Auto">
+              <Ellipse Grid.RowSpan="2" Width="9" Height="9" VerticalAlignment="Center" Fill="#90A4AE" IsVisible="{Binding IsPending}" />
+              <Ellipse Grid.RowSpan="2" Width="9" Height="9" VerticalAlignment="Center" Fill="#43A047" IsVisible="{Binding IsSuccess}" />
+              <Ellipse Grid.RowSpan="2" Width="9" Height="9" VerticalAlignment="Center" Fill="#E53935" IsVisible="{Binding IsFailure}" />
+              <TextBlock Grid.Column="2" Text="{Binding Id}" FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="14" />
+              <TextBlock Grid.Column="2" Grid.Row="1" Classes="hint" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis">
+                <Run Text="{Binding Kind}" /> · <Run Text="{Binding StatusLine}" />
+              </TextBlock>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <DockPanel Grid.Column="2" DataContext="{Binding SelectedResult}" x:DataType="vm:QueryResultRow">
+        <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,6">
+          <Grid ColumnDefinitions="*,Auto,6,Auto">
+            <SelectableTextBlock Text="{Binding Id}" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" />
+            <CheckBox Grid.Column="1" Content="Satırları kaydır"
+                      IsChecked="{Binding $parent[Window].((vm:QueryRunViewModel)DataContext).WrapLines}" />
+            <Button Name="CopyButton" Grid.Column="3" Content="Yanıtı kopyala" />
+          </Grid>
+          <SelectableTextBlock Text="{Binding Details}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="{Binding Url}" FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+        </StackPanel>
+        <TextBox Name="BodyBox" Text="{Binding Body, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True"
+                 FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="12"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
+      </DockPanel>
+    </Grid>
+  </DockPanel>
+</Window>

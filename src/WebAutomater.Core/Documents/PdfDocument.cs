@@ -249,8 +249,33 @@ public sealed class PdfDocument : IDisposable
     /// </summary>
     public PdfTextLayout GetTextLayout(int index)
     {
-        var (width, height) = _pageSizes[index];
         lock (Gate)
+            return GetTextLayoutLocked(index);
+    }
+
+    /// <summary>
+    /// Arayüz iş parçacığı için: PDF başka bir işte (arka plan taraması) meşgulse en fazla <paramref name="wait"/> bekler,
+    /// alamazsa false döner. Böylece uzun bir tarama sırasında fare hareketi arayüzü dondurmaz.
+    /// </summary>
+    public bool TryGetTextLayout(int index, TimeSpan wait, out PdfTextLayout layout)
+    {
+        layout = PdfTextLayout.Empty;
+        if (!Monitor.TryEnter(Gate, wait))
+            return false;
+        try
+        {
+            layout = GetTextLayoutLocked(index);
+            return true;
+        }
+        finally
+        {
+            Monitor.Exit(Gate);
+        }
+    }
+
+    private PdfTextLayout GetTextLayoutLocked(int index)
+    {
+        var (width, height) = _pageSizes[index];
         {
             var page = LoadPage(index);
             try

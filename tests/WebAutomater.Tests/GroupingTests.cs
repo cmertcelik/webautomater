@@ -34,71 +34,151 @@ public class CaseNumberTests
         Assert.Equal(expected, CaseNumber.FromFileName(name, 5, 7));
 }
 
+public class CaseFolderNameTests
+{
+    private static readonly GroupingOptions Options = new();
+
+    [Theory]
+    [InlineData("34765", "34765", "")]
+    [InlineData("34765-vesayet", "34765", "vesayet")]
+    [InlineData("34765 - vesayet-İflas", "34765", "vesayet-İflas")]
+    public void Parses_number_and_labels(string name, string number, string labels)
+    {
+        Assert.True(CaseFolderName.TryParse(name, Options, out var parsed));
+        Assert.Equal(number, parsed.Number);
+        Assert.Equal(labels, parsed.Labels);
+    }
+
+    [Theory]
+    [InlineData("İflas")]
+    [InlineData("2024")]
+    [InlineData("20240512")]
+    [InlineData("35476a")]
+    public void Ignores_other_folders(string name) => Assert.False(CaseFolderName.TryParse(name, Options, out _));
+
+    [Fact]
+    public void Adds_only_missing_labels()
+    {
+        var name = new CaseFolderName("34765", "vesayet");
+        Assert.Equal("34765-vesayet-İflas", name.WithLabels(["VESAYET", "İflas"]).ToString());
+        Assert.Equal("34765-vesayet", name.WithLabels(["vesayet"]).ToString());
+    }
+}
+
 public class GroupingPlannerTests
 {
     private static readonly string Root = Path.Combine(Path.GetTempPath(), "kok");
+    private static readonly GroupingOptions Options = new();
 
     private static readonly GroupingTag[] Tags =
     [
-        new("İflas", ["iflas kararı"]),
-        new("Konkordato", ["konkordato"]),
+        new("vesayet", ["vesayet kararı"]),
+        new("İflas", ["iflas"]),
     ];
 
-    private static GroupingCandidate C(string name, params int[] tags) =>
-        new(Path.Combine(Root, name), tags.Select(t => new TagHit(t, Tags[t].Keywords[0])).ToList());
+    private static string F(string name) => Path.Combine(Root, name);
 
-    private static string Dest(GroupingPlan plan, string name) =>
-        plan.Moves.Single(m => Path.GetFileName(m.Source) == name).DestinationFolder;
-
-    [Fact]
-    public void Same_number_files_follow_the_tagged_one()
+    private static ExistingCaseFolder Folder(string name, params string[] files)
     {
-        var plan = GroupingPlanner.Plan(Root, [C("35476 karar.pdf", 0), C("35476 tebligat.pdf"), C("35476 ek.pdf")], Tags, new());
-        var expected = Path.Combine(Root, "İflas", "35476");
-        Assert.All(plan.Moves, m => Assert.Equal(expected, m.DestinationFolder));
-        Assert.Equal(3, plan.Moves.Count);
-        Assert.Contains("35476 karar.pdf", plan.Moves.Single(m => m.Source.EndsWith("tebligat.pdf")).Reason);
+        CaseFolderName.TryParse(name, Options, out var parsed);
+        var path = Path.Combine(Root, name);
+        return new ExistingCaseFolder(path, parsed, files.Select(f => Path.Combine(path, f)).ToList());
     }
 
     [Fact]
-    public void Tagged_file_without_number_goes_to_tag_folder_and_untagged_single_stays()
+    public void Groups_same_number_files_without_any_tags()
     {
-        var plan = GroupingPlanner.Plan(Root, [C("karar.pdf", 1), C("dilekce.pdf"), C("99999 tek.pdf")], Tags, new());
-        Assert.Equal(Path.Combine(Root, "Konkordato"), Dest(plan, "karar.pdf"));
-        Assert.Equal(2, plan.Unchanged.Count);
+        var grouping = GroupingPlanner.GroupByNumber(Root, [F("34765 karar.pdf"), F("34765 ek.docx"), F("99999 tek.pdf"), F("dilekce.pdf")], [], Options);
+        var group = Assert.Single(grouping.Groups);
+        Assert.Equal("34765", group.Number);
+        Assert.Equal(2, group.IncomingFiles.Count);
+        Assert.Equal(2, grouping.Unchanged.Count);
+
+        var plan = GroupingPlanner.BuildPlan(grouping, new Dictionary<string, List<TagEvidence>>(), []);
+        var folder = Assert.Single(plan.Folders);
+        Assert.Equal(F("34765"), folder.FinalFolder);
+        Assert.True(folder.IsNew);
     }
 
     [Fact]
-    public void Untagged_same_number_files_get_a_number_folder()
+    public void Single_file_folders_are_optional()
     {
-        var plan = GroupingPlanner.Plan(Root, [C("11111 a.pdf"), C("11111 b.pdf")], Tags, new());
-        Assert.All(plan.Moves, m => Assert.Equal(Path.Combine(Root, "11111"), m.DestinationFolder));
+        var grouping = GroupingPlanner.GroupByNumber(Root, [F("99999 tek.pdf")], [], Options with { SingleFileFolders = true });
+        Assert.Equal("99999", Assert.Single(grouping.Groups).Number);
     }
 
     [Fact]
-    public void First_tag_in_list_wins_when_a_case_matches_several()
+    public void Found_tags_are_appended_to_folder_name_in_tag_order()
     {
-        var plan = GroupingPlanner.Plan(Root, [C("22222 a.pdf", 1), C("22222 b.pdf", 0)], Tags, new(CaseSubfolders: false));
-        Assert.All(plan.Moves, m => Assert.Equal(Path.Combine(Root, "İflas"), m.DestinationFolder));
-        Assert.Contains("ayrıca uyuyor: Konkordato", plan.Moves.Single(m => m.Source.EndsWith("a.pdf")).Reason);
+        var grouping = GroupingPlanner.GroupByNumber(Root, [F("34765 a.pdf"), F("34765 b.pdf")], [], Options);
+        var hits = new Dictionary<string, List<TagEvidence>>
+        {
+            ["34765"] = [new(1, "İflas", F("34765 b.pdf"), "iflas"), new(0, "vesayet", F("34765 a.pdf"), "vesayet kararı")],
+        };
+        var plan = GroupingPlanner.BuildPlan(grouping, hits, Tags);
+        Assert.Equal(F("34765-vesayet-İflas"), Assert.Single(plan.Folders).FinalFolder);
     }
 
     [Fact]
-    public void New_file_joins_case_already_placed_in_a_tag_folder()
+    public void New_file_joins_existing_labeled_folder_and_only_new_files_are_scanned()
     {
-        var existingFolder = Path.Combine(Root, "Konkordato", "33333");
-        var existing = new Dictionary<string, List<ExistingCase>> { ["33333"] = [new ExistingCase(1, existingFolder)] };
-        // İçinde başka etiket geçse de dosya numarasının bulunduğu klasöre gider; dava bölünmez.
-        var plan = GroupingPlanner.Plan(Root, [C("33333 yeni.pdf", 0)], Tags, new(), existing);
-        Assert.Equal(existingFolder, Dest(plan, "33333 yeni.pdf"));
+        var existing = Folder("34765-vesayet", "34765 eski.pdf");
+        var grouping = GroupingPlanner.GroupByNumber(Root, [F("34765 yeni.pdf")], [existing], Options);
+        var group = Assert.Single(grouping.Groups);
+        Assert.Same(existing, group.Folder);
+        Assert.Equal([F("34765 yeni.pdf")], group.FilesToScan);
+
+        // Yeni dosyada bulunan, klasörde zaten yazılı etiket tekrar eklenmez; yeni etiket eklenir.
+        var plan = GroupingPlanner.BuildPlan(grouping, new Dictionary<string, List<TagEvidence>>
+        {
+            ["34765"] = [new(0, "vesayet", F("34765 yeni.pdf"), "vesayet kararı"), new(1, "İflas", F("34765 yeni.pdf"), "iflas")],
+        }, Tags);
+        var folder = Assert.Single(plan.Folders);
+        Assert.Equal(Path.Combine(Root, "34765-vesayet-İflas"), folder.FinalFolder);
+        Assert.True(folder.Renames);
+        Assert.Equal("İflas", Assert.Single(folder.NewLabels).TagName);
+    }
+
+    [Fact]
+    public void Unlabeled_existing_folder_is_rescanned_and_renamed_without_new_files()
+    {
+        var existing = Folder("11111", "11111 a.pdf", "11111 b.txt");
+        var grouping = GroupingPlanner.GroupByNumber(Root, [], [existing], Options);
+        Assert.Equal([Path.Combine(existing.Path, "11111 a.pdf")], Assert.Single(grouping.Groups).FilesToScan);
+
+        var none = GroupingPlanner.BuildPlan(grouping, new Dictionary<string, List<TagEvidence>>(), Tags);
+        Assert.False(none.HasChanges);
+
+        var plan = GroupingPlanner.BuildPlan(grouping, new Dictionary<string, List<TagEvidence>>
+        {
+            ["11111"] = [new(1, "İflas", existing.Files[0], "iflas")],
+        }, Tags);
+        Assert.Equal(F("11111-İflas"), Assert.Single(plan.Folders).FinalFolder);
+    }
+
+    [Fact]
+    public void Single_file_joins_existing_folder_of_its_number()
+    {
+        var grouping = GroupingPlanner.GroupByNumber(Root, [F("22222 tek.pdf")], [Folder("22222", "22222 x.pdf")], Options);
+        Assert.Equal([F("22222 tek.pdf")], Assert.Single(grouping.Groups).IncomingFiles);
+    }
+
+    [Fact]
+    public void Folders_of_same_number_are_merged_into_labeled_one()
+    {
+        var plain = Folder("33333", "33333 a.pdf");
+        var labeled = Folder("33333-İflas", "33333 b.pdf");
+        var grouping = GroupingPlanner.GroupByNumber(Root, [], [plain, labeled], Options);
+        var group = Assert.Single(grouping.Groups);
+        Assert.Same(labeled, group.Folder);
+        Assert.Equal(plain.Files, group.IncomingFiles);
     }
 
     [Fact]
     public void Files_sharing_any_number_are_linked()
     {
-        var plan = GroupingPlanner.Plan(Root, [C("44444.pdf", 0), C("44444-55555.pdf"), C("55555 ek.pdf")], Tags, new());
-        Assert.Equal(3, plan.Moves.Count);
-        Assert.All(plan.Moves, m => Assert.Equal(Path.Combine(Root, "İflas", "44444"), m.DestinationFolder));
+        var grouping = GroupingPlanner.GroupByNumber(Root, [F("44444.pdf"), F("44444-55555.pdf"), F("55555 ek.pdf")], [], Options);
+        Assert.Equal(3, Assert.Single(grouping.Groups).IncomingFiles.Count);
     }
 }
 
@@ -108,38 +188,100 @@ public class GroupingEndToEndTests : IDisposable
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
-    [Fact]
-    public void Scans_pdfs_and_moves_them_into_tag_and_case_folders()
+    private static GroupingPlan Plan(string root, GroupingTag[] tags, GroupingOptions options)
     {
-        File.WriteAllBytes(Path.Combine(_dir, "35476 karar.pdf"), TestPdf.Create("Giris", "IFLAS KARARI verildi"));
-        File.WriteAllBytes(Path.Combine(_dir, "35476 tebligat.pdf"), TestPdf.Create("Tebligat"));
-        File.WriteAllBytes(Path.Combine(_dir, "diger.pdf"), TestPdf.Create("Bos"));
-        Directory.CreateDirectory(Path.Combine(_dir, "İflas", "35476"));
-        File.WriteAllBytes(Path.Combine(_dir, "İflas", "35476", "35476 tebligat.pdf"), TestPdf.Create("eski"));
-        // Önceki gruplamadan kalan numara klasörü: etiketi artık bulundu, o da taşınmalı.
-        Directory.CreateDirectory(Path.Combine(_dir, "77777"));
-        File.WriteAllBytes(Path.Combine(_dir, "77777", "77777 a.pdf"), TestPdf.Create("Konkordato talebi"));
-        File.WriteAllBytes(Path.Combine(_dir, "77777", "77777 b.pdf"), TestPdf.Create("x"));
-
-        GroupingTag[] tags = [new("İflas", ["iflas kararı"]), new("Konkordato", ["konkordato"])];
-        var options = new GroupingOptions();
+        var grouping = GroupingPlanner.ScanFolder(root, options);
         var matcher = new TagMatcher(tags);
-        var candidates = GroupingPlanner.FindCandidates(_dir, options)
-            .Select(p => matcher.ScanFile(p))
-            .Select(s => new GroupingCandidate(s.Path, s.Hits))
-            .ToList();
-        Assert.Equal(5, candidates.Count);
+        var hits = new Dictionary<string, List<TagEvidence>>();
+        foreach (var group in grouping.Groups)
+        {
+            hits[group.Number] = group.FilesToScan
+                .Select(f => (File: f, Scan: matcher.ScanFile(f)))
+                .SelectMany(x => x.Scan.Hits.Select(h => new TagEvidence(h.TagIndex, tags[h.TagIndex].Name, x.File, h.Keyword)))
+                .ToList();
+        }
 
-        var plan = GroupingPlanner.Plan(_dir, candidates, tags, options, GroupingPlanner.FindExistingCases(_dir, tags, options));
-        var result = GroupingPlanner.Apply(plan);
+        return GroupingPlanner.BuildPlan(grouping, hits, tags);
+    }
+
+    [Fact]
+    public void Groups_by_number_then_labels_folders_and_handles_reruns()
+    {
+        File.WriteAllBytes(Path.Combine(_dir, "35476 karar.pdf"), TestPdf.Create("Giris", "VESAYET KARARI verildi"));
+        File.WriteAllBytes(Path.Combine(_dir, "35476 tebligat.pdf"), TestPdf.Create("Tebligat"));
+        File.WriteAllText(Path.Combine(_dir, "35476 not.txt"), "not");
+        File.WriteAllBytes(Path.Combine(_dir, "77777 a.pdf"), TestPdf.Create("x"));
+        File.WriteAllBytes(Path.Combine(_dir, "77777 b.pdf"), TestPdf.Create("y"));
+        File.WriteAllText(Path.Combine(_dir, "77777 bozuk.pdf"), "pdf değil");
+        File.WriteAllBytes(Path.Combine(_dir, "diger.pdf"), TestPdf.Create("Bos"));
+        GroupingTag[] tags = [new("vesayet", ["vesayet kararı"])];
+        var options = new GroupingOptions();
+
+        var result = GroupingPlanner.Apply(Plan(_dir, tags, options));
 
         Assert.Empty(result.Failed);
-        Assert.Equal(4, result.Moved.Count);
-        Assert.True(File.Exists(Path.Combine(_dir, "İflas", "35476", "35476 karar.pdf")));
-        // Aynı adlı dosyanın üzerine yazılmaz.
-        Assert.True(File.Exists(Path.Combine(_dir, "İflas", "35476", "35476 tebligat (2).pdf")));
-        Assert.True(File.Exists(Path.Combine(_dir, "Konkordato", "77777", "77777 b.pdf")));
-        Assert.False(Directory.Exists(Path.Combine(_dir, "77777")));
+        Assert.Equal(6, result.Moved.Count);
+        Assert.True(File.Exists(Path.Combine(_dir, "35476-vesayet", "35476 tebligat.pdf")));
+        Assert.True(File.Exists(Path.Combine(_dir, "35476-vesayet", "35476 not.txt")));
+        // Bozuk PDF gruplamayı durdurmaz; adındaki numaraya göre gruplanır.
+        Assert.True(File.Exists(Path.Combine(_dir, "77777", "77777 bozuk.pdf")));
         Assert.True(File.Exists(Path.Combine(_dir, "diger.pdf")));
+        Assert.Equal(["35476-vesayet", "77777"], Directory.GetDirectories(_dir).Select(Path.GetFileName).Order());
+
+        // Sonradan gelen dosya ve sonradan eklenen etiket: aynı numaralı dosya var olan klasöre gider, etiketsiz klasör yeniden taranır.
+        File.WriteAllBytes(Path.Combine(_dir, "77777 yeni.pdf"), TestPdf.Create("Iflas talebi"));
+        File.WriteAllBytes(Path.Combine(_dir, "35476 yeni.pdf"), TestPdf.Create("x"));
+        tags = [new("vesayet", ["vesayet kararı"]), new("İflas", ["iflas"])];
+
+        var second = Plan(_dir, tags, options);
+        Assert.Equal(2, second.MoveCount);
+        var rerun = GroupingPlanner.Apply(second);
+
+        Assert.Empty(rerun.Failed);
+        Assert.True(File.Exists(Path.Combine(_dir, "77777-İflas", "77777 yeni.pdf")));
+        Assert.True(File.Exists(Path.Combine(_dir, "77777-İflas", "77777 a.pdf")));
+        Assert.True(File.Exists(Path.Combine(_dir, "35476-vesayet", "35476 yeni.pdf")));
+        Assert.False(Directory.Exists(Path.Combine(_dir, "77777")));
+    }
+
+    [Fact]
+    public void Same_name_file_is_not_overwritten()
+    {
+        Directory.CreateDirectory(Path.Combine(_dir, "12345"));
+        File.WriteAllText(Path.Combine(_dir, "12345", "12345 a.pdf"), "eski");
+        File.WriteAllText(Path.Combine(_dir, "12345 a.pdf"), "yeni");
+
+        var result = GroupingPlanner.Apply(Plan(_dir, [], new GroupingOptions()));
+
+        Assert.Empty(result.Failed);
+        Assert.Equal("eski", File.ReadAllText(Path.Combine(_dir, "12345", "12345 a.pdf")));
+        Assert.Equal("yeni", File.ReadAllText(Path.Combine(_dir, "12345", "12345 a (2).pdf")));
+    }
+}
+
+public class TagMatcherRobustnessTests : IDisposable
+{
+    private readonly string _dir = Directory.CreateTempSubdirectory("wa-tag").FullName;
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+
+    [Fact]
+    public void Broken_or_missing_files_return_errors_instead_of_throwing()
+    {
+        var matcher = new TagMatcher([new GroupingTag("x", ["kelime"])]);
+        var broken = Path.Combine(_dir, "bozuk.pdf");
+        File.WriteAllBytes(broken, [0x25, 0x50, 0x44, 0x46, 0x00, 0xFF]);
+        Assert.NotNull(matcher.ScanFile(broken).Error);
+        Assert.NotNull(matcher.ScanFile(Path.Combine(_dir, "yok.pdf")).Error);
+    }
+
+    [Fact]
+    public void Scanned_pdf_stops_early_and_reports_no_text()
+    {
+        var path = Path.Combine(_dir, "taranmis.pdf");
+        File.WriteAllBytes(path, TestPdf.Create(Enumerable.Repeat(" ", 30).ToArray()));
+        var scan = new TagMatcher([new GroupingTag("x", ["kelime"])]).ScanFile(path);
+        Assert.Null(scan.Error);
+        Assert.True(scan.HasNoText);
     }
 }

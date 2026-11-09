@@ -65,8 +65,12 @@ Soldan sağa dört panel vardır; aralarındaki çizgiler sürüklenerek genişl
 1. **Dosyalar:** **Klasör seç...** ile klasörü seçin. Alt klasörler ok ya da çift tıklamayla açılır (klavyede sağ/sol ok, Enter). Seçilen klasör sonraki açılışta hatırlanır.
    - **Yeni klasör:** Seçili klasörün içinde (dosya seçiliyse onun klasöründe, hiçbir şey seçili değilse ana klasörde) yeni klasör oluşturur.
    - **Taşıma:** Dosya ya da klasörü sürükleyip bir klasörün üzerine bırakın. Bir dosyanın üzerine bırakınca o dosyanın klasörüne, listedeki boş alana bırakınca ana klasöre taşınır. Kapalı bir klasörün üzerinde biraz bekleyince klasör açılır. Hedefte aynı adda bir öğe varsa taşıma yapılmaz. Açık PDF taşınırsa görüntüleyici açık kalır, yolu güncellenir.
-   - **Etiketler:** Etiket adını (klasör adı olarak da kullanılır, ör. *İflas*) ve PDF içinde aranacak kelimeleri virgülle ayırarak girin (ör. *iflas kararı, iflasın açılması*). Büyük/küçük harf ve Türkçe karakter farkı gözetilmez, kelimenin ekli halleri de bulunur. Sıra önceliktir: bir dosya birden çok etikete uyarsa listede üstteki seçilir. Aynı menüde dosya numarası hane aralığı (varsayılan 5–7) ve etiket klasöründe numara alt klasörü açılıp açılmayacağı ayarlanır.
-   - **Otomatik grupla:** Seçili klasördeki (klasör seçili değilse ana klasördeki) PDF'lerin içinde etiket kelimelerini arar ve dosyaları etiket klasörlerine taşır (*İflas / 35476 / 35476 karar.pdf*). Adında aynı dosya numarası geçen dosyalar aynı konuya ait sayılır: birinde etiket kelimesi geçmesi, hepsinin o klasöre gitmesine yeter. Daha önce bir etiket klasörüne yerleşmiş bir numaranın yeni dosyaları da oraya gider. Hiçbir etikete uymayan ama aynı numaralı birden çok dosya, numara adında bir klasörde toplanır; etiket sonradan bulunursa bir sonraki gruplamada bu klasör de etikete taşınır. Taşımadan önce hangi dosyanın nereye, neden gideceğini gösteren bir önizleme açılır. Aynı adlı dosyanın üzerine yazılmaz, adına sayı eklenir. Metin katmanı olmayan (taranmış) PDF'ler yalnızca dosya numarasına göre gruplanır.
+   - **Etiketler:** Etiket adını (ör. *vesayet*) ve PDF içinde aranacak kelimeleri virgülle ayırarak girin (ör. *vesayet kararı, vasi tayini*). Büyük/küçük harf ve Türkçe karakter farkı gözetilmez, kelimenin ekli halleri de bulunur. Aynı menüde dosya numarası hane aralığı (varsayılan 5–7) ve tek dosyalık numaralar için klasör açılıp açılmayacağı ayarlanır.
+   - **Otomatik grupla:** Seçili klasörde (klasör seçili değilse ana klasörde) iki aşamada çalışır. Taşımadan önce hangi dosyanın hangi klasöre gideceğini ve hangi etiketin nerede bulunduğunu gösteren bir önizleme açılır.
+     1. **Dosya numarasına göre gruplama:** Adında aynı dosya numarası geçen dosyalar (ör. *34765 karar.pdf*, *34765 tebligat.udf*) `34765` klasöründe toplanır. Etiket tanımlı olmasa da yapılır ve yalnızca dosya adlarına bakıldığı için hızlıdır. Sonradan gelen dosyalar var olan numara klasörüne eklenir. Numarası başka hiçbir dosyada geçmeyen dosya yerinde kalır (ayarla değiştirilebilir).
+     2. **Etiket arama:** Yalnızca gruplanan dosyaların içinde etiket kelimeleri aranır. Bulunan etiket klasör adının sonuna eklenir: `34765` → `34765-vesayet`. Birden çok etiket bulunursa sırayla eklenir (`34765-vesayet-iflas`); etiket için ayrıca klasör açılmaz. Etiketi zaten yazılmış klasörlerde yalnızca yeni gelen dosyalar taranır. Etiketsiz klasörler yeniden taranır, böylece sonradan eklenen etiketler de bulunur. Bir grupta tüm etiketler bulununca o grubun kalan dosyalarına bakılmaz.
+     - Aynı adlı dosyanın üzerine yazılmaz, adına sayı eklenir. Aynı numaralı birden çok klasör varsa etiketli olanda birleştirilir.
+     - Okunamayan, bozuk, metin katmanı olmayan ya da 300 MB'tan büyük PDF'ler gruplamayı durdurmaz: yalnızca adlarındaki numaraya göre gruplanır ve önizlemede listelenir. Bir PDF'te en fazla 100 sayfaya bakılır. 60 saniyede okunamayan dosya atlanır.
 2. **PDF görüntüleyici:** PDF'e tıklayınca açılır. Ctrl + tekerlek yakınlaştırır; **Sığdır** sayfayı alan genişliğine oturtur. PageUp/PageDown/Home/End çalışır.
    - **Yazı seçip kopyalama:** Fareyle sürükleyerek yazıyı seçin (sayfalar arasında da; fare alanın dışına çıkınca sayfa kendiliğinden kayar). Çift tıklama kelimeyi, üç kez tıklama satırı seçer; Shift + tıklama seçimi uzatır. **Ctrl+C** kopyalar, **Ctrl+A** tüm belgeyi seçer, **Esc** seçimi kaldırır. Sağ tık menüsünde de **Kopyala** ve **Tümünü seç** var. Taranmış (görüntü) sayfalarda seçilecek yazı yoktur.
 3. **Bulunan Numaralar:** 11 haneli sayılar T.C. kimlik, 10 haneli sayılar vergi numarası olarak listelenir. Aynı numara tek satırda, geçtiği sayfalarla birlikte görünür; çift tıklama o sayfaya gider.
@@ -74,6 +78,9 @@ Soldan sağa dört panel vardır; aralarındaki çizgiler sürüklenerek genişl
    - Bulunan numaralar sayfada renklendirilir: sarı doğrulanmış, turuncu doğrulanmamış. Bu yalnızca ekrandaki görünümdür, PDF dosyası değişmez. Görüntüleyicideki **Vurgula** düğmesi kapatıp açar.
    - **Hepsini bul:** Yalnızca açık PDF'te değil, seçilen klasördeki (alt klasörler dahil) tüm PDF'lerde arar. Her numara bir kez listelenir; altında geçtiği ilk dosya ve kaç dosyada daha geçtiği yazar. Tüm dosyaları görmek için satırın üzerinde bekleyin; çift tıklama ilk dosyayı o sayfada açar. Tarama sürerken düğme **Durdur** olur. **✕** toplu sonuçları kapatıp açık belgenin numaralarına döner. Açılamayan ve metin katmanı olmayan PDF'ler uyarı satırında sayılır.
    - **Tümünü kopyala** ya da seçip Ctrl+C. Numaralar alt alta kopyalanır, Excel'e yapıştırınca her biri ayrı satıra gelir. Excel baştaki sıfırı siler (`0123456789` gibi vergi numaraları); korumak için hedef sütunu önce Metin biçimine alın.
+   - **Müşteri sorgulama / İstihbarat sorgulama:** Seçili numaraları (seçim yoksa listedeki tüm numaraları) bir web servisine sorgular. Yanındaki **⚙** ile isteği tanımlayın: Chrome'da F12 > Network sekmesinde sorgu isteğine sağ tıklayıp **Copy > Copy as cURL** (bash ya da cmd), **Copy as fetch** ya da **Copy as fetch (Node.js)** seçin, kutuya yapıştırın ve numaranın geçtiği yeri `{id}` ile değiştirin (adreste, başlıkta ya da gövdede olabilir). Kutunun altında isteğin nasıl anlaşıldığı (yöntem, adres, `{id}`'nin yeri) ve varsa uyarılar görünür. Ham HTTP isteği de yapıştırılabilir. Numaralar sırayla sorgulanır; sonuçlar ayrı bir pencerede listelenir, numaraya tıklayınca yanıt (JSON ise girintili) görünür ve **Yanıtı kopyala** ile alınabilir. Pencere kapanınca kalan sorgular iptal edilir.
+     - Tarayıcının **Copy as fetch** kopyası çerezleri içermez; sistem oturum çerezi istiyorsa cURL ya da Node.js fetch kopyasını kullanın. Oturum süresi dolunca istek hata verir (genellikle 401/403 ya da giriş sayfası); isteği yeniden kopyalayın.
+     - Kopyalanan istek çerez ve oturum bilgisi içerebilir; ayar dosyasında (`belge-tarama.json`) düz metin olarak saklanır.
 4. **Excel'e Kaydet:** **Seç...** ile mevcut dosyayı ya da **Yeni...** ile yeni dosyayı belirleyin, alanları doldurup **Excel'e kaydet**'e basın. Satır ilk çalışma sayfasının sonuna eklenir. PDF dosya yolu da bir alandır: kendiliğinden doldurulur, silinemez ama istemiyorsanız kapatabilir, yeniden adlandırabilir ya da sırasını değiştirebilirsiniz. Kayıttan sonra form temizlenir; hata olursa girilen bilgiler korunur.
    - **Alanları düzenle:** Alanları açıp kapatın, yeniden adlandırın, ▲▼ ile sıralayın ya da silin. **+ Alan ekle** ile dört türde alan eklenir: **Metin** (istenirse çok satırlı), **Tarih** (elle ya da takvimden), **Seçim listesi** (seçenekleri her satıra bir tane yazın) ve **Onay kutusu** (Excel'e "Evet"/"Hayır" yazılır). **Varsayılan** ilk alanlara döner. Alanlar sonraki açılışta hatırlanır.
    - Değerler, Excel'in ilk satırındaki **aynı adlı sütuna** yazılır (büyük/küçük harf önemsiz); o adda sütun yoksa sona yeni sütun eklenir. Böylece alan sırasını değiştirmek ya da yeni alan eklemek eski kayıtları bozmaz. Bir alanı yeniden adlandırırsanız Excel'de yeni bir sütun açılır.
@@ -84,6 +91,16 @@ Sınırlar:
 - Parola korumalı PDF'ler açılamaz.
 - Excel dosyası Excel'de açıkken kayıt yapılamaz; dosyayı kapatıp yeniden deneyin. Yazma geçici dosya üzerinden yapıldığı için yarıda kalan kayıt dosyayı bozmaz.
 - Mevcut dosya ClosedXML ile yeniden yazılır. Dosyada grafik, makro, resim gibi özel içerik varsa kayıt için ayrı bir dosya kullanın.
+
+## Hata yönetimi ve günlük
+
+Beklenmeyen bir hata uygulamayı kapatmaz. İşlem yarıda kalır ve pencerenin sağ alt köşesinde kısa bir hata bildirimi çıkar; bildirim birkaç saniye sonra kendiliğinden kapanır. Hatanın ayrıntısı günlük dosyasına yazılır:
+
+- Windows: `%AppData%\WebAutomater\logs\webautomater-YYYYMMDD.log`
+- macOS: `~/Library/Application Support/WebAutomater/logs/`
+- Linux: `~/.config/WebAutomater/logs/`
+
+Bildirimdeki **Günlük klasörünü aç** klasörü açar. Her gün için ayrı dosya tutulur, 30 günden eski dosyalar silinir. Günlüğe uygulamanın açılıp kapanması, Belge Tarama işlemleri (klasör açma, PDF açma hataları, gruplama, taşıma, Excel kaydı), sorgulamalar ve web otomasyonundaki alt panel satırları, kayıt ve oynatma hataları yazılır. Terminal (`wa`) de aynı dosyaya yazar. Sorgulamalarda numara, çerez ve yanıt içeriği günlüğe yazılmaz.
 
 ## Terminal (`wa`)
 
@@ -122,6 +139,7 @@ Sık kullanılan `play` seçenekleri:
 --stop-on-error         İlk hatada dur (varsayılan: sonraki tekrara geç)
 --type-delay 50         Metni tuş tuş yaz
 --report sonuc.csv      Her tekrarın sonucunu CSV'ye yaz
+--files C:\CVler        Yükleme adımlarındaki göreli dosya adlarını bu klasörde ara
 -v                      Her adımı yazdır
 ```
 
@@ -177,6 +195,24 @@ Hangi adım bir kolona bağlanınca ne olur:
 
 **Şablonlar:** Bir adımın değerine `{{kolon}}` yazabilirsiniz, örneğin `Merhaba {{isim}}, kodunuz {{tekrar}}`. `{{tekrar}}` kaçıncı tekrarda olunduğunu, `{{satir}}` veri satır numarasını verir. Veri kaynağı olmadan direkt oynatmada da çalışır, örneğin `test{{tekrar}}@ornek.com`.
 
+## Dosya yükleme
+
+Kayıtta bir dosya alanına ya da sitenin "Dosya seç" butonuna tıklayınca tarayıcının penceresi yerine uygulamanın dosya seçicisi açılır (site belirli türleri kabul ediyorsa süzgeç olarak gelir). Seçilen dosyanın **tam yolu** "Dosya yükle" adımına yazılır. Tarayıcı güvenlik nedeniyle siteye yalnızca dosya adını verdiği için bu yolu uygulama yakalar.
+
+Üç tür alan desteklenir:
+
+- **Görünür dosya alanı** (`<input type="file">`): Dosya doğrudan alana yazılır.
+- **Gizli alanı açan özel buton** ("CV Yükle" gibi): Butona tıklama ayrı adım olarak kaydedilir. Oynatmada dosya gizli alana doğrudan yazılır; tıklamanın açtırdığı pencere ekranda asılı kalmaz.
+- **Tıklamayla anlık oluşturulan alan** (sayfada hiç bulunmayan): Adım seçicisiz kaydedilir ve oynatmada bir önceki tıklamanın açtırdığı dosya seçme penceresi doldurulur.
+
+Her tekrarda farklı dosya (ör. her aday için ayrı CV):
+
+- Adımı veri kaynağındaki dosya yolu kolonuna bağlayın. Kolonda tam yol (`C:\CVler\ahmet.pdf`) ya da yalnızca ad (`ahmet.pdf`) olabilir. Yalnızca ad varsa dosya, **veri dosyasının bulunduğu klasörde** aranır (terminalde `--files` ile başka klasör verilebilir).
+- Ya da adımın değerine kolon adını şablon olarak yazın: `C:\CVler\{{TC}}.pdf`. Adı tam bilinmiyorsa `*` kullanılabilir: `C:\CVler\{{TC}}*.pdf`.
+- Birden çok dosya `|` ile ayrılır (alan çoklu seçime izin vermiyorsa açık bir hata verilir). Windows'un "Yol olarak kopyala"sındaki tırnaklar ve `%USERPROFILE%` gibi değişkenler de çalışır.
+- Bir satırda dosya bulunamazsa yalnızca o tekrar hatalı sayılır; hata mesajında aranan yol yazar. Değer boşsa dosya seçimi temizlenir ve devam edilir.
+- Adım düzenleyicideki **Gözat...** ile adımın dosyası sonradan değiştirilebilir. Her tekrarda aynı dosya yükleniyorsa ve dosya bulunamıyorsa oynatma hiç başlamadan uyarılır.
+
 ## Yükleme süreleri değişken olduğunda
 
 Oynatma sabit süre beklemez, koşul bekler. Bir şey gelir gelmez devam eder, gelmezse zaman aşımına kadar bekler:
@@ -230,7 +266,8 @@ macOS'ta imzasız uygulamayı ilk açışta Finder'da sağ tık → **Aç** deme
 
 ## Bilinen sınırlar
 
-- Dosya yükleme adımında tarayıcı dosyanın tam yolunu vermez, yalnızca adını verir. Kayıttan sonra adımın değerine tam dosya yolunu yazın.
+- Terminalden (`wa record`) kayıtta dosya seçme penceresi tarayıcının kendisidir ve tarayıcı yalnızca dosya adını verir; adımın değerine tam yolu `wa edit --value` ile yazın. Masaüstü arayüzünde tam yol kendiliğinden kaydedilir.
+- Sürükleyip bırakarak dosya yüklenen alanlar (input olmadan yalnızca bırakma bölgesi olan siteler) kaydedilmez.
 - Kontrol modunda pasif butonun yakalanması Chromium ile test edildi. Firefox ve WebKit'te pasif öğeler tıklama olayı üretmeyebilir; bu durumda "Sayfada yazı var mı" kontrolünü kullanın ya da Chromium ile kaydedin.
 - Sürükle-bırak, fare tekerleğiyle kaydırma, sağ tık ve çizim (canvas) işlemleri kaydedilmez. Playwright tıklamadan önce öğeyi kendisi görünür alana kaydırdığı için kaydırma çoğu zaman gerekmez.
 - Kayıt sırasında adres çubuğuna yazılan yeni adresler "Sayfaya git" adımı olur. Bir tıklamadan sonraki 2 sn içinde gerçekleşen sayfa geçişleri ise o tıklamanın sonucu sayılır ve ayrı adım olarak kaydedilmez.

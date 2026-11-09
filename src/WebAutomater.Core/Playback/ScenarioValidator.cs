@@ -11,8 +11,10 @@ public static class ScenarioValidator
     };
 
     /// <summary>Oynatmadan önce tespit edilebilen sorunları döndürür.</summary>
-    public static List<string> Validate(Scenario scenario, DataTableSource? data)
+    /// <param name="filesDirectory">Yükleme adımlarındaki göreli yolların tamamlanacağı klasör.</param>
+    public static List<string> Validate(Scenario scenario, DataTableSource? data, string? filesDirectory = null)
     {
+        filesDirectory ??= data?.Path is { Length: > 0 } dataPath ? Path.GetDirectoryName(Path.GetFullPath(dataPath)) : null;
         var problems = new List<string>();
         var enabled = scenario.Steps.Where(s => s.Enabled).ToList();
         if (enabled.Count == 0)
@@ -62,6 +64,24 @@ public static class ScenarioValidator
 
             if (step.Type == StepType.End)
                 continue;
+
+            if (step.Type == StepType.Upload)
+            {
+                // Veriye bağlı değilse her tekrarda aynı dosya yüklenir: şimdiden denetlenebilir.
+                var fromData = !string.IsNullOrWhiteSpace(step.Parameter) || ValueResolver.TemplateKeys(step.Value).Any();
+                if (!fromData)
+                {
+                    var resolved = UploadFiles.Resolve(step.Value, filesDirectory);
+                    if (resolved.Missing.Count > 0)
+                        problems.Add($"Adım {no}: yüklenecek dosya bulunamadı: {string.Join(", ", resolved.Missing)}. " +
+                                     "Kayıtta tarayıcı yalnızca dosya adını veriyorsa adımda tam yolunu yazın ya da \"Gözat\" ile seçin.");
+                    else if (resolved.IsEmpty)
+                        problems.Add($"Adım {no}: yüklenecek dosya belirtilmemiş. Dosya yolu yazın ya da adımı veri kaynağındaki dosya yolu kolonuna bağlayın.");
+                }
+
+                // Seçicisiz yükleme, bir önceki tıklamanın açtırdığı dosya seçme penceresini kullanır.
+                continue;
+            }
 
             var needsTarget = step.Type is not (StepType.Navigate or StepType.Wait or StepType.Press or StepType.WaitForText);
             var clickByText = step.Type is StepType.Click or StepType.DoubleClick or StepType.Hover

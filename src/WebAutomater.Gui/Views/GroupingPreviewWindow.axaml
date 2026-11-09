@@ -13,12 +13,9 @@
       <Setter Property="Opacity" Value="0.65" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
-    <Style Selector="Border.folder">
-      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseLowBrush}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="Padding" Value="8,6" />
-      <Setter Property="Margin" Value="0,0,0,8" />
+    <Style Selector="ListBox.rows > ListBoxItem">
+      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="MinHeight" Value="0" />
     </Style>
   </Window.Styles>
 
@@ -26,6 +23,12 @@
     <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="0,0,0,10">
       <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" />
       <TextBlock Text="{Binding RootText}" Classes="hint" TextWrapping="NoWrap" TextTrimming="PathSegmentEllipsis" />
+      <Expander IsVisible="{Binding HasWarnings}" HorizontalAlignment="Stretch" Margin="0,4,0,0">
+        <Expander.Header>
+          <TextBlock Text="{Binding WarningsTitle}" Foreground="#EF6C00" TextWrapping="Wrap" />
+        </Expander.Header>
+        <TextBox Text="{Binding WarningsText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="160" FontSize="12" />
+      </Expander>
     </StackPanel>
 
     <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto,8,Auto" Margin="0,10,0,0">
@@ -34,66 +37,36 @@
               Background="#1E88E5" Foreground="White" FontWeight="SemiBold" />
     </Grid>
 
-    <ScrollViewer>
-      <StackPanel Margin="0,0,12,0">
-        <Expander IsVisible="{Binding HasWarnings}" HorizontalAlignment="Stretch" Margin="0,0,0,8">
-          <Expander.Header>
-            <TextBlock Text="İçi okunamayan dosyalar var: bunlar yalnızca dosya numarasına göre gruplanır" Foreground="#EF6C00" TextWrapping="Wrap" />
-          </Expander.Header>
-          <ItemsControl ItemsSource="{Binding Warnings}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="x:String">
-                <TextBlock Text="{Binding}" Classes="hint" Margin="0,1" />
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </Expander>
-
-        <ItemsControl ItemsSource="{Binding Folders}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:GroupingPreviewFolder">
-              <Border Classes="folder">
-                <StackPanel Spacing="3">
-                  <Grid ColumnDefinitions="Auto,6,*,Auto">
-                    <Path Width="16" Height="13" Stretch="Uniform" VerticalAlignment="Center" Fill="#E0A82E"
-                          Data="M 0,2 Q 0,0 2,0 L 6,0 L 8,2 L 14,2 Q 16,2 16,4 L 16,11 Q 16,13 14,13 L 2,13 Q 0,13 0,11 Z" />
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
-                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                      <Border IsVisible="{Binding IsNew}" Background="#1E88E5" CornerRadius="3" Padding="5,0" VerticalAlignment="Center">
-                        <TextBlock Text="yeni" FontSize="11" Foreground="White" />
-                      </Border>
-                    </StackPanel>
-                    <TextBlock Grid.Column="3" Text="{Binding CountText}" Classes="hint" VerticalAlignment="Center" />
-                  </Grid>
-                  <ItemsControl ItemsSource="{Binding Files}" Margin="22,0,0,0">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:GroupingPreviewFile">
-                        <StackPanel Margin="0,2" ToolTip.Tip="{Binding FullPath}">
-                          <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                          <TextBlock Text="{Binding Detail}" Classes="hint" FontSize="11" />
-                        </StackPanel>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
+    <!-- Sanallaştırılmış düz liste: yalnızca ekranda görünen satırlar çizilir. -->
+    <ListBox Classes="rows" ItemsSource="{Binding Rows}" Background="Transparent" SelectionMode="Single"
+             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:GroupingPreviewRow">
+          <Panel ToolTip.Tip="{Binding FullPath}">
+            <Grid IsVisible="{Binding IsFolder}" ColumnDefinitions="Auto,6,*,Auto" RowDefinitions="Auto,Auto" Margin="0,8,0,2">
+              <Path Grid.RowSpan="2" Width="16" Height="13" Stretch="Uniform" VerticalAlignment="Top" Margin="0,2,0,0" Fill="#E0A82E"
+                    Data="M 0,2 Q 0,0 2,0 L 6,0 L 8,2 L 14,2 Q 16,2 16,4 L 16,11 Q 16,13 14,13 L 2,13 Q 0,13 0,11 Z" />
+              <TextBlock Grid.Column="2" Text="{Binding Text}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+              <Border Grid.Column="3" IsVisible="{Binding HasBadge}" Background="#1E88E5" CornerRadius="3" Padding="5,0" VerticalAlignment="Center">
+                <TextBlock Text="{Binding Badge}" FontSize="11" Foreground="White" />
               </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-
-        <Expander IsVisible="{Binding HasUnchanged}" HorizontalAlignment="Stretch" Header="{Binding UnchangedTitle}">
-          <ItemsControl ItemsSource="{Binding Unchanged}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:GroupingPreviewFile">
-                <StackPanel Margin="0,2" ToolTip.Tip="{Binding FullPath}">
-                  <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                  <TextBlock Text="{Binding Detail}" Classes="hint" FontSize="11" />
-                </StackPanel>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </Expander>
-      </StackPanel>
-    </ScrollViewer>
+              <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Text="{Binding Detail}" Classes="hint" FontSize="11" />
+            </Grid>
+            <StackPanel IsVisible="{Binding IsLabel}" Orientation="Horizontal" Spacing="6" Margin="22,1,0,1">
+              <Border Background="#43A047" CornerRadius="3" Padding="5,0" VerticalAlignment="Center">
+                <TextBlock Text="etiket" FontSize="11" Foreground="White" />
+              </Border>
+              <TextBlock Text="{Binding Text}" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Detail}" Classes="hint" FontSize="11" VerticalAlignment="Center" TextWrapping="NoWrap" />
+            </StackPanel>
+            <StackPanel IsVisible="{Binding IsFile}" Margin="22,1,0,1">
+              <TextBlock Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding Detail}" Classes="hint" FontSize="11" IsVisible="{Binding HasDetail}" />
+            </StackPanel>
+            <TextBlock IsVisible="{Binding IsSection}" Text="{Binding Text}" FontWeight="SemiBold" Margin="0,14,0,2" Opacity="0.8" />
+          </Panel>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
   </DockPanel>
 </Window>

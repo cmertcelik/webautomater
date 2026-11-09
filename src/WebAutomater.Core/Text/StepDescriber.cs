@@ -147,7 +147,7 @@ public static class StepDescriber
         StepType.Click or StepType.DoubleClick or StepType.Hover => "Metni bu kolondaki değer olan öğeye tıklanır (özel açılır listeler için).",
         StepType.Navigate => "Bu kolondaki adrese gidilir.",
         StepType.Press => "Bu kolondaki tuşa basılır.",
-        StepType.Upload => "Bu kolondaki dosya yolu yüklenir.",
+        StepType.Upload => "Bu kolondaki dosya yolu yüklenir (tam yol ya da veri dosyasının klasörüne göre ad; birden çok dosya | ile).",
         StepType.WaitForText => "Bu kolondaki yazı sayfada görünene kadar beklenir.",
         StepType.Condition => "Metin bu kolondaki değerle karşılaştırılır.",
         _ => "",

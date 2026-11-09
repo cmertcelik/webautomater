@@ -97,6 +97,39 @@
     </Style>
   </UserControl.Styles>
 
+  <UserControl.DataTemplates>
+    <!-- Numara panelinin altındaki sorgu butonu ve ⚙ ayarı. -->
+    <DataTemplate DataType="vm:QueryConfigViewModel">
+      <Grid ColumnDefinitions="*,4,Auto">
+        <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{Binding ButtonText}"
+                Command="{Binding $parent[views:DocumentsView].((vm:DocumentsViewModel)DataContext).RunQueryCommand}"
+                CommandParameter="{Binding}" ToolTip.Tip="{Binding ButtonTip}" ToolTip.ShowOnDisabled="True" />
+        <Button Grid.Column="2" Classes="icon" Content="⚙" ToolTip.Tip="İsteği ayarla">
+          <Button.Flyout>
+            <Flyout Placement="LeftEdgeAlignedBottom">
+              <StackPanel Width="560" Spacing="6">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="{Binding SettingsTitle}" Classes="title" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Classes="small" Content="Temizle" Command="{Binding ClearCommand}" />
+                </Grid>
+                <TextBlock Classes="hint"
+                           Text="Chrome'da F12 > Network sekmesinde sorgu isteğine sağ tıklayın, Copy > Copy as cURL (bash ya da cmd) veya Copy as fetch seçip buraya yapıştırın. Sonra numaranın geçtiği yeri {id} yazarak değiştirin (ör. ...?tcKimlikNo={id} ya da &quot;vkn&quot;:&quot;{id}&quot;). Her numara için {id} yerine o numara konup istek gönderilir." />
+                <TextBox Text="{Binding RequestText}" AcceptsReturn="True" AcceptsTab="False" TextWrapping="Wrap"
+                         Height="240" FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="12"
+                         Watermark="curl 'https://.../sorgu?tc={id}' -H 'cookie: ...'" />
+                <TextBlock Text="{Binding Summary}" Classes="hint" Foreground="#43A047" Opacity="1" IsVisible="{Binding HasSummary}" />
+                <TextBlock Text="{Binding Error}" Classes="hint" Foreground="#E53935" Opacity="1" IsVisible="{Binding HasError}" />
+                <TextBlock Text="{Binding Warnings}" Classes="hint" Foreground="#EF6C00" Opacity="1" IsVisible="{Binding HasWarnings}" />
+                <TextBlock Classes="hint"
+                           Text="İstek çerez ve oturum bilgisi içerebilir; bu bilgisayardaki ayar dosyasında saklanır. Oturum süresi dolunca istek hata verir: Chrome'dan yeniden kopyalayın." />
+              </StackPanel>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
+      </Grid>
+    </DataTemplate>
+  </UserControl.DataTemplates>
+
   <Grid ColumnDefinitions="270,5,*,5,240,5,290">
 
     <!-- 1. Dosya ağacı -->
@@ -134,11 +167,11 @@
                     <StackPanel Spacing="6" Margin="0,0,12,0">
                       <TextBlock Text="Etiketler" Classes="title" />
                       <TextBlock Classes="hint"
-                                 Text="Otomatik grupla, her PDF'in içinde aşağıdaki kelimeleri arar ve dosyayı etiket adındaki klasöre taşır. Kelimeleri virgülle ayırın; büyük/küçük harf ve Türkçe karakter farkı gözetilmez, ekli halleri de bulunur (iflas → iflasın)." />
+                                 Text="Otomatik grupla önce adında aynı dosya numarası geçen dosyaları numara klasöründe toplar (34765). Sonra bu dosyaların içinde aşağıdaki kelimeleri arar; bulunan etiket klasör adına eklenir (34765-vesayet). Kelimeleri virgülle ayırın; büyük/küçük harf ve Türkçe karakter farkı gözetilmez, ekli halleri de bulunur (iflas → iflasın)." />
                       <TextBlock Classes="hint"
-                                 Text="Sıra önceliktir: bir dosya birden çok etikete uyarsa üstteki seçilir." />
+                                 Text="Birden çok etiket bulunursa hepsi listedeki sırayla eklenir (34765-vesayet-iflas)." />
                       <TextBlock Classes="hint" Margin="0,4,0,0" IsVisible="{Binding HasNoTags}"
-                                 Text="Henüz etiket yok. Etiket olmadan yalnızca aynı dosya numaralı dosyalar gruplanır." />
+                                 Text="Henüz etiket yok. Etiket olmadan da aynı dosya numaralı dosyalar gruplanır." />
                       <ItemsControl ItemsSource="{Binding Tags}">
                         <ItemsControl.ItemTemplate>
                           <DataTemplate x:DataType="vm:GroupTagViewModel">
@@ -165,7 +198,7 @@
 
                       <TextBlock Text="Dosya numarası" Classes="label" Margin="0,10,0,0" />
                       <TextBlock Classes="hint"
-                                 Text="Adında aynı numara geçen dosyalar (ör. 35476 karar.pdf, 35476 tebligat.pdf) aynı konuya ait sayılır ve birlikte taşınır: birinin içinde etiket kelimesi geçmesi yeterlidir. Etiketi bulunamayan aynı numaralı dosyalar numara adında klasörde toplanır." />
+                                 Text="Adında aynı numara geçen dosyalar (ör. 35476 karar.pdf, 35476 tebligat.pdf) aynı konuya ait sayılır ve numara klasöründe toplanır; birinin içinde etiket kelimesi geçmesi klasörün etiketlenmesine yeter. Sonradan gelen dosyalar var olan klasöre (35476 ya da 35476-vesayet) eklenir; etiketi yazılmış klasörlerde yalnızca yeni dosyalar taranır." />
                       <StackPanel Orientation="Horizontal" Spacing="6">
                         <NumericUpDown Value="{Binding CaseMinDigits}" Minimum="1" Maximum="20" Increment="1" FormatString="0" Width="110" />
                         <TextBlock Text="–" VerticalAlignment="Center" />
@@ -173,8 +206,8 @@
                         <TextBlock Text="haneli sayılar" VerticalAlignment="Center" />
                       </StackPanel>
                       <TextBlock Classes="hint" Text="Tarih gibi sayılar karışmasın diye 5–7 hane önerilir (20240512 sayılmaz)." />
-                      <CheckBox Content="Etiket klasöründe her numara için alt klasör aç" IsChecked="{Binding CaseSubfolders}"
-                                ToolTip.Tip="Açıkken: İflas / 35476 / dosya.pdf. Kapalıyken: İflas / dosya.pdf" />
+                      <CheckBox Content="Tek dosyalık numaralar için de klasör aç" IsChecked="{Binding SingleFileFolders}"
+                                ToolTip.Tip="Kapalıyken numarası başka hiçbir dosyada geçmeyen dosya yerinde kalır (aynı numaralı klasör varsa ona eklenir)." />
                     </StackPanel>
                   </ScrollViewer>
                 </Flyout>
@@ -279,6 +312,10 @@
           <TextBlock Text="{Binding ScanStatus}" Classes="hint" />
           <TextBlock Text="{Binding ScanWarning}" Classes="hint" Foreground="#EF6C00" Opacity="1" ToolTip.Tip="{Binding ScanWarningTip}"
                      IsVisible="{Binding ScanWarning, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,8,0,0">
+          <ContentControl Content="{Binding CustomerQuery}" />
+          <ContentControl Content="{Binding IntelQuery}" />
         </StackPanel>
         <TextBlock DockPanel.Dock="Bottom" Classes="hint" Margin="0,6,0,0" Text="{Binding IdentifiersHint}" />
         <ListBox Name="Identifiers" Classes="ids" ItemsSource="{Binding VisibleRows}" SelectionMode="Multiple" Background="Transparent"

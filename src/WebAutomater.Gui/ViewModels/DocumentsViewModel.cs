@@ -5,6 +5,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using WebAutomater.Core.Diagnostics;
 using WebAutomater.Core.Documents;
 
 namespace WebAutomater.Gui.ViewModels;
@@ -145,6 +146,8 @@ public static class FileOps
 
 public sealed partial class DocumentsViewModel : ObservableObject
 {
+    private const string LogArea = "Belge Tarama";
+
     // Açık belgenin numaraları (toplu modda da tutulur; toplu sonuçlar kapatılınca geri gelir).
     private readonly List<IdentifierRow> _docRows = [];
     private readonly Dictionary<string, IdentifierRow> _docRowsByValue = [];
@@ -166,10 +169,23 @@ public sealed partial class DocumentsViewModel : ObservableObject
         LoadFields(settings.Fields is { Count: > 0 } fields ? WithPdfPath(fields) : ExcelFieldViewModel.Defaults);
         _caseMinDigits = Math.Clamp(settings.CaseMinDigits, 1, 20);
         _caseMaxDigits = Math.Clamp(settings.CaseMaxDigits, _caseMinDigits, 20);
-        _caseSubfolders = settings.CaseSubfolders;
+        _singleFileFolders = settings.SingleFileFolders;
         foreach (var tag in settings.Tags ?? [])
             AttachTag(new GroupTagViewModel(tag));
         ValidateTags();
+        CustomerQuery = new QueryConfigViewModel("Müşteri sorgulama", settings.CustomerQuery);
+        IntelQuery = new QueryConfigViewModel("İstihbarat sorgulama", settings.IntelQuery);
+        foreach (var query in Queries)
+        {
+            query.Changed += SaveSettings;
+            query.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(QueryConfigViewModel.Template))
+                    RunQueryCommand.NotifyCanExecuteChanged();
+            };
+        }
+
+        VisibleRows.CollectionChanged += (_, _) => UpdateQueryTargets();
         if (!string.IsNullOrEmpty(settings.RootFolder))
             // Dispatcher üzerinden: await sonrası devam da arayüz iş parçacığında olsun.
             Dispatcher.UIThread.Post(() => _ = RestoreRootAsync(settings.RootFolder));
@@ -213,6 +229,7 @@ public sealed partial class DocumentsViewModel : ObservableObject
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path)
         {
             CloseBulk();
+            AppLog.Info(LogArea, $"Klasör seçildi: {path}");
             await LoadRootAsync(path, []);
             SaveSettings();
         }
@@ -280,10 +297,11 @@ public sealed partial class DocumentsViewModel : ObservableObject
             node.IsEmpty = children.Count == 0;
             Nodes.InsertRange(index + 1, children);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex)
         {
             node.IsExpanded = false;
-            TreeMessage = $"\"{node.Name}\" açılamadı: {ex.Message}";
+            TreeMessage = $"\"{node.Name}\" açılamadı: {AppLog.Describe(ex)}";
+            AppLog.Warning(LogArea, $"Klasör açılamadı: {node.FullPath}", ex);
         }
     }
 
@@ -292,6 +310,8 @@ public sealed partial class DocumentsViewModel : ObservableObject
         // Ağ sürücüsü erişilemezse Directory.Exists uzun sürebilir; arayüzü bekletmeyelim.
         if (await Task.Run(() => Directory.Exists(path)))
             await LoadRootAsync(path, []);
+        else
+            AppLog.Warning(LogArea, $"Son kullanılan klasör bulunamadı: {path}");
     }
 
     private async Task LoadRootAsync(string path, HashSet<string> expanded)
@@ -311,9 +331,10 @@ public sealed partial class DocumentsViewModel : ObservableObject
                     await ExpandAsync(Nodes[i]);
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex)
         {
-            TreeMessage = $"Klasör okunamadı: {ex.Message}";
+            TreeMessage = $"Klasör okunamadı: {AppLog.Describe(ex)}";
+            AppLog.Warning(LogArea, $"Klasör okunamadı: {path}", ex);
         }
     }
 
@@ -380,9 +401,10 @@ public sealed partial class DocumentsViewModel : ObservableObject
                 return false;
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
-            NewFolderError = $"Klasör oluşturulamadı: {ex.Message}";
+            NewFolderError = $"Klasör oluşturulamadı: {AppLog.Describe(ex)}";
+            AppLog.Warning(LogArea, $"Klasör oluşturulamadı: {path}", ex);
             return false;
         }
 
@@ -435,11 +457,14 @@ public sealed partial class DocumentsViewModel : ObservableObject
                 return;
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
-            TreeMessage = $"\"{source.Name}\" taşınamadı: {ex.Message}";
+            TreeMessage = $"\"{source.Name}\" taşınamadı: {AppLog.Describe(ex)}";
+            AppLog.Warning(LogArea, $"Taşınamadı: {source.FullPath} → {destination}", ex);
             return;
         }
+
+        AppLog.Info(LogArea, $"Taşındı: {source.FullPath} → {destination}");
 
         var oldPath = source.FullPath;
         Relocate(oldPath, destination);
@@ -481,9 +506,9 @@ public sealed partial class DocumentsViewModel : ObservableObject
     [ObservableProperty]
     private int _caseMaxDigits = 7;
 
-    /// <summary>Etiket klasörünün içinde her dosya numarası için ayrı alt klasör.</summary>
+    /// <summary>Numarası başka hiçbir dosyada geçmeyen dosya için de numara klasörü açılsın.</summary>
     [ObservableProperty]
-    private bool _caseSubfolders = true;
+    private bool _singleFileFolders;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(AutoGroupText))]
@@ -503,7 +528,7 @@ public sealed partial class DocumentsViewModel : ObservableObject
     public string? GroupLocation => SelectedNode is { IsDirectory: true } dir ? dir.FullPath : RootFolder;
 
     public string AutoGroupTip => GroupLocation is { } location
-        ? $"PDF'lerin içinde etiket kelimelerini arar, aynı dosya numaralı dosyalarla birlikte klasörlere ayırır. Taşımadan önce önizleme gösterilir.\nKlasör: {location}"
+        ? $"Adında aynı dosya numarası geçen dosyaları numara klasöründe toplar, sonra bu dosyalarda etiket arar ve bulunan etiketi klasör adına ekler (34765-vesayet). Taşımadan önce önizleme gösterilir.\nKlasör: {location}"
         : "Önce bir klasör seçin.";
 
     public string TagsButtonText => Tags.Count == 0 ? "Etiketler" : $"Etiketler ({Tags.Count})";
@@ -522,7 +547,7 @@ public sealed partial class DocumentsViewModel : ObservableObject
         SaveSettings();
     }
 
-    partial void OnCaseSubfoldersChanged(bool value) => SaveSettings();
+    partial void OnSingleFileFoldersChanged(bool value) => SaveSettings();
 
     private void AttachTag(GroupTagViewModel tag)
     {
@@ -606,9 +631,13 @@ public sealed partial class DocumentsViewModel : ObservableObject
 
     private bool CanAutoGroup() => RootFolder is not null;
 
+    // Tek bir PDF'in etiket araması bundan uzun sürerse beklenmez, sonraki dosyaya geçilir.
+    private static readonly TimeSpan FileScanTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>
-    /// Klasördeki PDF'lerin içinde etiket kelimelerini arar, dosya numaralarına göre birleştirir, önizleme gösterip onaylanırsa taşır.
-    /// Tarama sürerken basılırsa durdurur.
+    /// 1) Dosya adlarına göre aynı numaralı dosyaları numara klasörlerinde toplar (etiket olmasa da).
+    /// 2) Yalnızca bu grupların PDF'lerinde etiket arar; bulunanları klasör adına ekler.
+    /// Önizleme onaylanınca uygular. Tarama sürerken basılırsa durdurur. Hiçbir hata uygulamayı kapatmaz.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanAutoGroup), AllowConcurrentExecutions = true)]
     private async Task AutoGroupAsync()
@@ -629,73 +658,100 @@ public sealed partial class DocumentsViewModel : ObservableObject
         }
 
         var tags = Tags.Select(t => t.ToTag()).ToList();
-        var options = new GroupingOptions(CaseMinDigits, CaseMaxDigits, CaseSubfolders);
+        var options = new GroupingOptions(CaseMinDigits, CaseMaxDigits, SingleFileFolders);
         var matcher = new TagMatcher(tags);
         var cts = _groupCts = new CancellationTokenSource();
         var token = cts.Token;
         IsGrouping = true;
         TreeMessage = "";
-        GroupStatus = "PDF dosyaları aranıyor...";
         var warnings = new List<string>();
+        var stage = "dosya adları okunurken";
+        AppLog.Info(LogArea, $"Otomatik gruplama başladı: {folder} ({tags.Count} etiket)");
         try
         {
-            var (files, existing) = await Task.Run(() =>
-                (GroupingPlanner.FindCandidates(folder, options), GroupingPlanner.FindExistingCases(folder, tags, options)), token);
-            if (files.Count == 0)
+            // 1. aşama: yalnızca dosya adları; PDF açılmaz, hızlıdır.
+            GroupStatus = "Dosya adları inceleniyor...";
+            var grouping = await Task.Run(() => GroupingPlanner.ScanFolder(folder, options, token), token);
+            if (grouping.Groups.Count == 0)
             {
-                GroupStatus = "Bu klasörde gruplanacak PDF yok.";
+                GroupStatus = grouping.Unchanged.Count == 0
+                    ? "Bu klasörde gruplanacak dosya yok."
+                    : $"Aynı dosya numarasını taşıyan dosya bulunamadı ({grouping.Unchanged.Count} dosya incelendi).";
                 return;
             }
 
-            var candidates = new List<GroupingCandidate>();
-            for (var i = 0; i < files.Count; i++)
+            // 2. aşama: yalnızca gruplanan dosyaların içinde etiket aranır.
+            stage = "etiketler aranırken";
+            var hits = new Dictionary<string, List<TagEvidence>>();
+            if (!matcher.IsEmpty)
             {
-                token.ThrowIfCancellationRequested();
-                GroupStatus = $"İnceleniyor... {i + 1}/{files.Count}: {Path.GetFileName(files[i])}";
-                var file = files[i];
-                var scan = matcher.IsEmpty
-                    ? new FileTagScan(file, [], false)
-                    : await Task.Run(() => matcher.ScanFile(file, token), token);
-                if (scan.Error is not null)
-                    warnings.Add($"{Path.GetFileName(file)}: açılamadı ({scan.Error}); yalnızca dosya numarasına göre gruplanır.");
-                else if (scan.HasNoText)
-                    warnings.Add($"{Path.GetFileName(file)}: metin katmanı yok (taranmış görüntü olabilir); yalnızca dosya numarasına göre gruplanır.");
-                candidates.Add(new GroupingCandidate(file, scan.Hits));
+                var toScan = grouping.Groups.Where(g => g.FilesToScan.Count > 0).ToList();
+                var total = toScan.Sum(g => g.FilesToScan.Count);
+                var done = 0;
+                foreach (var group in toScan)
+                {
+                    var found = hits[group.Number] = [];
+                    foreach (var file in group.FilesToScan)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        done++;
+                        // Grupta tüm etiketler bulunduysa kalan dosyalara bakmaya gerek yok.
+                        if (found.Select(h => h.TagIndex).Distinct().Count() == tags.Count)
+                            continue;
+                        GroupStatus = $"Etiketler aranıyor... {done}/{total} · {group.Number} · {Path.GetFileName(file)}";
+                        var scan = await ScanWithTimeoutAsync(matcher, file, token);
+                        if (scan.Error is not null)
+                            warnings.Add($"{Path.GetFileName(file)}: {scan.Error}");
+                        else if (scan.HasNoText)
+                            warnings.Add($"{Path.GetFileName(file)}: metin katmanı yok (taranmış görüntü olabilir), etiket aranamadı.");
+                        found.AddRange(scan.Hits
+                            .Where(h => found.All(f => f.TagIndex != h.TagIndex))
+                            .Select(h => new TagEvidence(h.TagIndex, tags[h.TagIndex].Name, file, h.Keyword)));
+                    }
+                }
             }
 
-            var plan = GroupingPlanner.Plan(folder, candidates, tags, options, existing);
+            stage = "önizleme hazırlanırken";
+            var plan = GroupingPlanner.BuildPlan(grouping, hits, tags);
             GroupStatus = "";
-            if (ConfirmGrouping is null || !await ConfirmGrouping(new GroupingPreviewViewModel(plan, warnings)) || plan.Moves.Count == 0)
+            if (!plan.HasChanges)
             {
-                GroupStatus = plan.Moves.Count == 0 ? "Taşınacak dosya bulunamadı." : "Gruplama iptal edildi; hiçbir dosya taşınmadı.";
+                GroupStatus = "Değişiklik yok: dosyalar zaten numara klasörlerinde ve yeni etiket bulunamadı.";
                 return;
             }
 
-            GroupStatus = $"{plan.Moves.Count} dosya taşınıyor...";
-            var result = await Task.Run(() => GroupingPlanner.Apply(plan, CancellationToken.None));
-            foreach (var (source, destination) in result.Moved)
+            if (ConfirmGrouping is null || !await ConfirmGrouping(new GroupingPreviewViewModel(plan, warnings)))
+            {
+                GroupStatus = "Gruplama iptal edildi; hiçbir dosya taşınmadı.";
+                return;
+            }
+
+            stage = "dosyalar taşınırken";
+            GroupStatus = $"{plan.MoveCount} dosya taşınıyor...";
+            var progress = new Progress<string>(name => GroupStatus = $"Taşınıyor: {name}");
+            var result = await Task.Run(() => GroupingPlanner.Apply(plan, progress, CancellationToken.None));
+            foreach (var (source, destination) in result.Renamed.Concat(result.Moved))
                 Relocate(source, destination);
 
-            GroupStatus = $"{result.Moved.Count} dosya {result.Moved.Select(m => Path.GetDirectoryName(m.Destination)).Distinct().Count()} klasörde toplandı." +
-                          (result.Failed.Count > 0 ? $" {result.Failed.Count} dosya taşınamadı; ayrıntı için üzerinde bekleyin." : "");
+            GroupStatus = $"{result.Moved.Count} dosya taşındı, {plan.Folders.Count(f => f.IsNew)} klasör oluşturuldu, {result.Renamed.Count} klasöre etiket eklendi." +
+                          (result.Failed.Count > 0 ? $" {result.Failed.Count} işlem yapılamadı; ayrıntı için üzerinde bekleyin." : "");
             GroupStatusTip = result.Failed.Count > 0 ? string.Join(Environment.NewLine, result.Failed.Take(30)) : null;
+            AppLog.Info(LogArea, $"Otomatik gruplama bitti: {GroupStatus}");
+            if (result.Failed.Count > 0)
+                AppLog.Warning(LogArea, "Yapılamayan işlemler: " + string.Join(" / ", result.Failed));
 
-            // Gruplanan klasör ve oluşan etiket klasörleri açık gelsin.
-            var expand = result.Moved.Select(m => Path.GetDirectoryName(m.Destination)!)
-                .SelectMany(d => Ancestors(d, folder))
-                .Append(folder)
-                .Where(d => !FileOps.SamePath(d, RootFolder))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            await ReloadTreeAsync(expand);
+            // Yüzlerce numara klasörünü tek tek açmak ağacı yavaşlatır; yalnızca gruplanan klasör açık gelsin.
+            await ReloadTreeAsync(FileOps.SamePath(folder, RootFolder) ? [] : [folder]);
         }
         catch (OperationCanceledException)
         {
             GroupStatus = "Gruplama durduruldu; hiçbir dosya taşınmadı.";
+            AppLog.Info(LogArea, "Otomatik gruplama kullanıcı tarafından durduruldu.");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex)
         {
-            GroupStatus = $"Klasör okunamadı: {ex.Message}";
+            GroupStatus = $"Gruplama {stage} yarıda kaldı: {AppLog.Describe(ex)}";
+            AppErrors.Report(LogArea, $"Otomatik gruplama {stage} hata verdi. Hiçbir dosya kaybolmadı; ayrıntı günlükte.", ex);
         }
         finally
         {
@@ -705,11 +761,21 @@ public sealed partial class DocumentsViewModel : ObservableObject
         }
     }
 
-    /// <summary><paramref name="path"/> ve <paramref name="stop"/>'a kadarki üst klasörleri (stop hariç).</summary>
-    private static IEnumerable<string> Ancestors(string path, string stop)
+    /// <summary>Bir dosyanın etiket aramasını arka planda yapar; çok uzun sürerse beklemeyi bırakır.</summary>
+    private static async Task<FileTagScan> ScanWithTimeoutAsync(TagMatcher matcher, string file, CancellationToken token)
     {
-        for (var dir = path; dir is not null && !FileOps.SamePath(dir, stop) && FileOps.IsInside(dir, stop); dir = Path.GetDirectoryName(dir))
-            yield return dir;
+        var task = Task.Run(() => matcher.ScanFile(file, token), token);
+        try
+        {
+            return await task.WaitAsync(FileScanTimeout, token);
+        }
+        catch (TimeoutException)
+        {
+            AppLog.Warning(LogArea, $"Etiket arama zaman aşımı ({FileScanTimeout.TotalSeconds:0} sn): {file}");
+            // Arka plandaki okuma bitince sonucu sessizce atılır.
+            _ = task.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+            return new FileTagScan(file, [], false, $"{FileScanTimeout.TotalSeconds:0} saniyede okunamadı, atlandı");
+        }
     }
 
     // ---------- PDF ----------
@@ -787,11 +853,30 @@ public sealed partial class DocumentsViewModel : ObservableObject
         }
         catch (PdfOpenException ex)
         {
+            AppLog.Warning(LogArea, $"PDF açılamadı: {path}: {ex.Message}");
             if (!token.IsCancellationRequested)
             {
                 ReplaceDocument(null);
                 _requestedPath = null;
                 ViewerMessage = ex.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Bozuk ya da çok büyük PDF uygulamayı kapatmasın.
+            AppLog.Error(LogArea, $"PDF açılırken/taranırken hata: {path}", ex);
+            if (!token.IsCancellationRequested && FileOps.SamePath(_requestedPath, path))
+            {
+                if (Document is null || !FileOps.SamePath(Document.Path, path))
+                {
+                    ReplaceDocument(null);
+                    _requestedPath = null;
+                    ViewerMessage = $"PDF açılamadı: {AppLog.Describe(ex)}";
+                }
+                else
+                {
+                    DocWarning = $"Tarama yarıda kaldı: {AppLog.Describe(ex)}";
+                }
             }
         }
         finally
@@ -1027,6 +1112,8 @@ public sealed partial class DocumentsViewModel : ObservableObject
                 token.ThrowIfCancellationRequested();
                 BulkStatus = $"Taranıyor... {done + 1}/{files.Count}: {Path.GetFileName(file)}";
                 var result = await Task.Run(() => PdfFolderScanner.ScanFile(file, token), token);
+                if (result.Error is not null)
+                    AppLog.Warning(LogArea, $"Hepsini bul: PDF açılamadı: {file}: {result.Error}");
                 token.ThrowIfCancellationRequested();
                 if (result.Error is not null)
                     failed.Add($"{Path.GetFileName(file)}: {result.Error}");
@@ -1047,9 +1134,10 @@ public sealed partial class DocumentsViewModel : ObservableObject
         {
             BulkStatus = $"Durduruldu: {done}/{files.Count} PDF tarandı, {_bulkRows.Count} numara bulundu.";
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex)
         {
-            BulkStatus = $"Klasör okunamadı: {ex.Message}";
+            BulkStatus = $"Tarama yarıda kaldı ({done}/{files.Count} PDF): {AppLog.Describe(ex)}";
+            AppErrors.Report(LogArea, "\"Hepsini bul\" taraması hata verdi.", ex);
         }
         finally
         {
@@ -1132,6 +1220,56 @@ public sealed partial class DocumentsViewModel : ObservableObject
             DocStatus = text;
         else if (!IsBulkScanning)
             BulkStatus = text;
+    }
+
+    // ---------- Müşteri / istihbarat sorgulama ----------
+
+    private IReadOnlyList<IdentifierRow> _selectedIdentifiers = [];
+
+    public QueryConfigViewModel CustomerQuery { get; }
+
+    public QueryConfigViewModel IntelQuery { get; }
+
+    private IEnumerable<QueryConfigViewModel> Queries => [CustomerQuery, IntelQuery];
+
+    /// <summary>Sorgu sonuçları penceresini açar. Görünüm tarafından atanır.</summary>
+    public Action<QueryRunViewModel>? ShowQueryResults { get; set; }
+
+    /// <summary>Listede seçili numaralar; görünüm seçim değişince bildirir.</summary>
+    public void SetSelectedIdentifiers(IEnumerable<IdentifierRow> rows)
+    {
+        _selectedIdentifiers = rows.ToList();
+        UpdateQueryTargets();
+    }
+
+    /// <summary>Seçili numaralar (listedeki sırayla); seçim yoksa listedekilerin tümü.</summary>
+    private List<IdentifierRow> QueryTargets()
+    {
+        var selected = VisibleRows.Where(r => _selectedIdentifiers.Contains(r)).ToList();
+        return selected.Count > 0 ? selected : VisibleRows.ToList();
+    }
+
+    private void UpdateQueryTargets()
+    {
+        var count = QueryTargets().Count;
+        foreach (var query in Queries)
+            query.TargetCount = count;
+        RunQueryCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanRunQuery(QueryConfigViewModel? query) => query is { IsReady: true, TargetCount: > 0 };
+
+    [RelayCommand(CanExecute = nameof(CanRunQuery))]
+    private void RunQuery(QueryConfigViewModel? query)
+    {
+        if (query?.Template is not { } template || ShowQueryResults is null)
+            return;
+        var targets = QueryTargets();
+        if (targets.Count == 0)
+            return;
+        var run = new QueryRunViewModel(query.Title, template, targets.Select(r => (r.Value, r.KindText)));
+        ShowQueryResults(run);
+        _ = run.RunAsync();
     }
 
     // ---------- Excel'e kaydet ----------
@@ -1335,11 +1473,13 @@ public sealed partial class DocumentsViewModel : ObservableObject
         {
             var row = await Task.Run(() => DocumentLogWriter.Append(excel, entry));
             ShowExcelMessage($"{row}. satır olarak eklendi.", isError: false);
+            AppLog.Info(LogArea, $"Excel'e {row}. satır eklendi: {excel}");
             foreach (var field in enabled)
                 field.ClearValue();
         }
         catch (Exception ex)
         {
+            AppLog.Error(LogArea, $"Excel'e kaydedilemedi: {excel}", ex);
             // Girilen bilgiler silinmez; kullanıcı sorunu giderip yeniden kaydedebilir.
             ShowExcelMessage(ex is ExcelFileLockedException ? ex.Message : $"Kaydedilemedi: {ex.Message}", isError: true);
         }
@@ -1364,7 +1504,9 @@ public sealed partial class DocumentsViewModel : ObservableObject
         IReadOnlyList<GroupTagDefinition>? Tags = null,
         int CaseMinDigits = 5,
         int CaseMaxDigits = 7,
-        bool CaseSubfolders = true);
+        bool SingleFileFolders = false,
+        string? CustomerQuery = null,
+        string? IntelQuery = null);
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WebAutomater", "belge-tarama.json");
@@ -1375,8 +1517,18 @@ public sealed partial class DocumentsViewModel : ObservableObject
         {
             return JsonSerializer.Deserialize<Settings>(File.ReadAllText(SettingsPath)) ?? new Settings();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
+        catch (FileNotFoundException)
         {
+            return new Settings();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return new Settings();
+        }
+        catch (Exception ex)
+        {
+            // Bozuk ayar dosyası açılışı engellemesin; varsayılanlarla devam edilir.
+            AppLog.Warning(LogArea, $"Ayarlar okunamadı, varsayılanlar kullanılıyor: {SettingsPath}", ex);
             return new Settings();
         }
     }
@@ -1387,14 +1539,18 @@ public sealed partial class DocumentsViewModel : ObservableObject
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             var settings = new Settings(RootFolder, ExcelPath, Fields.Select(f => f.ToDefinition()).ToList(),
-                Tags.Select(t => t.ToDefinition()).ToList(), CaseMinDigits, CaseMaxDigits, CaseSubfolders);
+                Tags.Select(t => t.ToDefinition()).ToList(), CaseMinDigits, CaseMaxDigits, SingleFileFolders,
+                NullIfEmpty(CustomerQuery?.RequestText), NullIfEmpty(IntelQuery?.RequestText));
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
             // Ayar kaydedilemezse yalnızca bir sonraki açılışta hatırlanmaz.
+            AppLog.Warning(LogArea, "Ayarlar kaydedilemedi.", ex);
         }
     }
+
+    private static string? NullIfEmpty(string? text) => string.IsNullOrWhiteSpace(text) ? null : text;
 
     public void Shutdown()
     {

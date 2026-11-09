@@ -2,6 +2,7 @@ using System.Text;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using WebAutomater.Cli.Commands;
+using WebAutomater.Core.Diagnostics;
 
 Console.OutputEncoding = Encoding.UTF8;
 
@@ -48,4 +49,18 @@ app.Configure(config =>
         .WithDescription("Playwright tarayıcısını indirir (chromium, firefox, webkit).");
 });
 
-return await app.RunAsync(args, cts.Token);
+AppLog.Info("Terminal", $"wa {string.Join(' ', args.Take(1))} başlatıldı.");
+try
+{
+    var code = await app.RunAsync(args, cts.Token);
+    if (code != 0)
+        AppLog.Warning("Terminal", $"wa {string.Join(' ', args.Take(1))} {code} koduyla bitti.");
+    return code;
+}
+catch (Exception ex)
+{
+    AppLog.Error("Terminal", "Beklenmeyen hata.", ex);
+    AnsiConsole.MarkupLine($"[red]Beklenmeyen hata:[/] {Markup.Escape(ex.Message)}");
+    AnsiConsole.MarkupLine($"[grey]Ayrıntı günlükte: {Markup.Escape(AppLog.CurrentFile)}[/]");
+    return 1;
+}

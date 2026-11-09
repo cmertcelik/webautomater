@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Playwright;
 using WebAutomater.Core.Browsers;
+using WebAutomater.Core.Diagnostics;
 using WebAutomater.Core.Models;
 
 namespace WebAutomater.Core.Recording;
@@ -9,6 +10,11 @@ public enum StepChangeKind { Added, Updated, Removed }
 
 /// <summary>Record: işlemler adım olur. Check: tıklanan öğe işlem görmez, kontrol düğümü oluşturulur.</summary>
 public enum RecorderMode { Record, Check }
+
+/// <summary>Kayıt sırasında sayfa dosya seçme penceresi açmak istedi.</summary>
+/// <param name="TargetName">Dosya alanının adı ("CV", "Özgeçmiş yükle").</param>
+/// <param name="Accept">Girdinin kabul ettiği türler (ör. ".pdf,.docx"); yoksa null.</param>
+public sealed record FileChooserRequest(string? TargetName, bool Multiple, bool Directory, string? Accept);
 
 public sealed class StepChangedEventArgs(StepChangeKind kind, Step step, int index) : EventArgs
 {
@@ -26,6 +32,9 @@ public sealed class Recorder : IAsyncDisposable
     // Bir işlemden bu süre içinde gerçekleşen sayfa geçişleri o işlemin sonucu sayılır.
     private const int NavigationAttributionMs = 2000;
     private const int DoubleClickWindowMs = 600;
+    // Seçilen dosyalar girdiye yazıldıktan sonra sayfadan "upload" olayı bu süre içinde gelmezse
+    // girdi sayfaya eklenmemiştir (site girdiyi anlık oluşturur): adım buradan eklenir.
+    private const int UploadEventWaitMs = 1500;
 
     private static readonly JsonSerializerOptions EventJson = new() { PropertyNameCaseInsensitive = true };
 
@@ -44,6 +53,8 @@ public sealed class Recorder : IAsyncDisposable
     private (Step Step, StepPort Port)? _tail;
     private readonly HashSet<Step> _added = [];
     private volatile RecorderMode _mode;
+    // Dosya seçme penceresinde seçilen tam yollar; sayfadan gelen (yalnızca dosya adlı) olayla eşleştirilir.
+    private List<string>? _chosenFiles;
 
     /// <param name="scenario">Eklenecek senaryo; boşsa yeni senaryo.</param>
     /// <param name="attachTo">Doluysa kayıt bu düğümün bu çıkışından dal olarak başlar ve başa "Sayfaya git" eklenmez.</param>
@@ -91,6 +102,13 @@ public sealed class Recorder : IAsyncDisposable
     public Task Completion => _completion.Task;
 
     public Action<string>? Log { get; set; }
+
+    /// <summary>
+    /// Doluysa sayfa dosya seçme penceresi açmak istediğinde işletim sisteminin penceresi yerine bu çağrılır;
+    /// seçilen tam yollar girdiye yazılır ve adıma kaydedilir. Boşsa tarayıcının penceresi açılır ve
+    /// tarayıcı yalnızca dosya adını verdiği için adımda yalnızca ad kalır. <see cref="StartAsync"/>'tan önce atanmalı.
+    /// </summary>
+    public Func<FileChooserRequest, Task<IReadOnlyList<string>?>>? ChooseFiles { get; set; }
 
     /// <summary>Yalnızca otomatik testler için: tarayıcıyı görünmez açar.</summary>
     public bool Headless { get; set; }
@@ -225,6 +243,8 @@ public sealed class Recorder : IAsyncDisposable
             if (frame == page.MainFrame)
                 OnMainFrameNavigated(page, frame.Url);
         };
+        if (ChooseFiles is not null)
+            page.FileChooser += (_, chooser) => _ = OnFileChooserAsync(page, chooser);
         page.Close += (_, _) =>
         {
             bool allClosed;
@@ -272,6 +292,95 @@ public sealed class Recorder : IAsyncDisposable
         }
     }
 
+    private async Task OnFileChooserAsync(IPage page, IFileChooser chooser)
+    {
+        // Dal kaydında başlangıca otomatik gidilirken dosyayı oynatıcı yükler.
+        if (ChooseFiles is not { } choose || CapturePaused || _mode == RecorderMode.Check)
+            return;
+        try
+        {
+            string? name = null, accept = null;
+            var directory = false;
+            try
+            {
+                // Bu öğe Playwright'ın yardımcı dünyasından gelir; sayfaya yüklenen betiğin işlevleri burada görünmez.
+                var info = await chooser.Element.EvaluateAsync<JsonElement>("""
+                    el => {
+                      const clean = s => (s || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+                      const label = el.labels && el.labels.length ? el.labels[0].innerText : '';
+                      const name = clean(label) || clean(el.getAttribute('aria-label')) || clean(el.title) || clean(el.name) || clean(el.id);
+                      return { name: name || null, dir: !!el.webkitdirectory, accept: el.accept || null };
+                    }
+                    """);
+                name = info.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+                directory = info.TryGetProperty("dir", out var dir) && dir.ValueKind == JsonValueKind.True;
+                accept = info.TryGetProperty("accept", out var a) && a.ValueKind == JsonValueKind.String ? a.GetString() : null;
+            }
+            catch (PlaywrightException)
+            {
+                // Girdi o arada kaldırılmış olabilir; ad olmadan da sorulur.
+            }
+
+            var paths = await choose(new FileChooserRequest(name, chooser.IsMultiple, directory, accept));
+            if (paths is not { Count: > 0 })
+                return;
+            var chosen = paths.ToList();
+            lock (_gate)
+            {
+                _chosenFiles = chosen;
+                // Pencerede geçen süre oynatmada beklenmez.
+                _lastTs = Now();
+            }
+
+            await chooser.SetFilesAsync(chosen);
+            await Task.Delay(UploadEventWaitMs);
+
+            lock (_gate)
+            {
+                if (!ReferenceEquals(_chosenFiles, chosen))
+                    return; // Sayfadaki girdiden olay geldi ve tam yollarla kaydedildi.
+                _chosenFiles = null;
+                AddStepLocked(new Step
+                {
+                    Type = StepType.Upload,
+                    // Seçicisiz yükleme: oynatmada bir önceki tıklamanın açtırdığı dosya seçme penceresi kullanılır.
+                    Selectors = [],
+                    Value = string.Join("|", chosen),
+                    TargetName = name ?? "Dosya seçici",
+                    TargetKind = "file",
+                    Multiple = chooser.IsMultiple,
+                    PageIndex = Math.Max(0, _pages.IndexOf(page)),
+                });
+            }
+        }
+        catch (PlaywrightException ex)
+        {
+            AppLog.Warning("Kayıt", "Seçilen dosya sayfaya verilemedi.", ex);
+            Log?.Invoke($"Dosya seçilemedi: {ex.Message.Split('\n')[0]}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Kayıt", "Dosya seçme penceresi açılamadı.", ex);
+            Log?.Invoke($"Dosya seçme penceresi açılamadı: {ex.Message}");
+        }
+    }
+
+    /// <summary>Sayfanın bildirdiği dosya adları seçilen tam yollarla aynıysa tam yolları döndürür.</summary>
+    private string? TakeChosenPaths(string? names)
+    {
+        if (_chosenFiles is not { } chosen)
+            return null;
+        var recorded = (names ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
+        var chosenNames = chosen.Select(p => Path.GetFileName(Path.TrimEndingDirectorySeparator(p))).ToList();
+        // Klasör yüklemede sayfa klasördeki dosyaları tek tek bildirir.
+        var matches = recorded.Count == chosenNames.Count && recorded.Order().SequenceEqual(chosenNames.Order()) ||
+                      chosen.Count == 1 && Directory.Exists(chosen[0]);
+        if (!matches)
+            return null;
+        _chosenFiles = null;
+        return string.Join("|", chosen);
+    }
+
     private void MarkLastActionAsNavigating(IPage page)
     {
         var pageIndex = _pages.IndexOf(page);
@@ -296,8 +405,9 @@ public sealed class Recorder : IAsyncDisposable
         {
             ev = JsonSerializer.Deserialize<RecordedEvent>(json, EventJson);
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
+            AppLog.Warning("Kayıt", "Sayfadan gelen olay okunamadı.", ex);
             return;
         }
         if (ev is null || CapturePaused)
@@ -348,6 +458,8 @@ public sealed class Recorder : IAsyncDisposable
                 PageIndex = Math.Max(0, _pages.IndexOf(page)),
             };
             ApplyFrame(step, page, frame);
+            if (step.Type == StepType.Upload && TakeChosenPaths(ev.Value) is { } fullPaths)
+                step.Value = fullPaths;
 
             var ts = ev.Ts;
             var delay = (int)Math.Max(0, ts - _lastTs);

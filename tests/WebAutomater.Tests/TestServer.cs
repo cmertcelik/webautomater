@@ -28,6 +28,36 @@ public sealed class TestServer : IDisposable
         </body></html>
         """;
 
+    // Üç tür dosya alanı: görünür girdi (forma bağlı, sunucuya gönderilir), gizli girdiyi açan özel buton
+    // ve DOM'a hiç eklenmeden tıklamayla oluşturulan girdi. Seçilen dosyalar sayfada "ad (boyut)" olarak yazılır.
+    public const string UploadPage = """
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
+          <form action="/upload-submit" method="post" enctype="multipart/form-data">
+            <label for="cv">CV</label>
+            <input id="cv" name="cv" type="file" accept=".pdf,.txt">
+            <button type="submit">Başvur</button>
+          </form>
+          <input id="hidden" type="file" multiple style="display:none">
+          <button type="button" id="pick" onclick="document.getElementById('hidden').click()">Belge seç</button>
+          <button type="button" id="dyn">Fotoğraf ekle</button>
+          <div id="out"></div>
+          <script>
+            const show = (tag, input) => {
+              const names = Array.from(input.files).map(f => f.name + ' (' + f.size + ')').join(', ');
+              document.getElementById('out').textContent += tag + ': ' + names + ';';
+            };
+            document.getElementById('cv').addEventListener('change', e => show('cv', e.target));
+            document.getElementById('hidden').addEventListener('change', e => show('gizli', e.target));
+            document.getElementById('dyn').addEventListener('click', () => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.onchange = () => show('anlik', input);
+              input.click();
+            });
+          </script>
+        </body></html>
+        """;
+
     // Sihirbaz: ilk sayfadaki "İleri" ikinci sayfayı yavaş yükler; ikinci sayfada da "İleri" vardır.
     // Yeni sayfa beklenmezse ikinci tıklama hâlâ ekranda duran ilk sayfadaki butona gider.
     public const string WizardPage = """
@@ -104,6 +134,9 @@ public sealed class TestServer : IDisposable
 
     public ConcurrentQueue<string> Submissions { get; } = new();
 
+    /// <summary>/upload-submit'e gelen multipart gövdeler.</summary>
+    public ConcurrentQueue<string> Uploads { get; } = new();
+
     public ConcurrentDictionary<string, int> Hits { get; } = new();
 
     private async Task LoopAsync()
@@ -137,6 +170,14 @@ public sealed class TestServer : IDisposable
                 case "/submit":
                     Submissions.Enqueue(WebUtility.UrlDecode(ctx.Request.Url.Query.TrimStart('?')));
                     body = "<html><body>ok</body></html>";
+                    break;
+                case "/upload":
+                    body = UploadPage;
+                    break;
+                case "/upload-submit":
+                    using (var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
+                        Uploads.Enqueue(await reader.ReadToEndAsync());
+                    body = "<html><body>yuklendi</body></html>";
                     break;
                 case "/wizard":
                     body = WizardPage;

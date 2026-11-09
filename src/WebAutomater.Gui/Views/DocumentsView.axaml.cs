@@ -45,6 +45,8 @@ public partial class DocumentsView : UserControl
 
         Identifiers.KeyDown += OnIdentifiersKeyDown;
         Identifiers.DoubleTapped += OnIdentifierDoubleTapped;
+        Identifiers.SelectionChanged += (_, _) =>
+            ViewModel?.SetSelectedIdentifiers(Identifiers.SelectedItems?.OfType<IdentifierRow>() ?? []);
 
         Tree.KeyDown += OnTreeKeyDown;
         Tree.DoubleTapped += OnTreeDoubleTapped;
@@ -92,7 +94,18 @@ public partial class DocumentsView : UserControl
         {
             _highlightSource.HighlightsChanged += Pages.InvalidateVisual;
             _highlightSource.ConfirmGrouping = ConfirmGroupingAsync;
+            _highlightSource.ShowQueryResults = ShowQueryResults;
         }
+    }
+
+    /// <summary>Sonuç penceresi pencere sahibine bağlı açılır ama engellemez; birden çok sorgu yan yana açık kalabilir.</summary>
+    private void ShowQueryResults(QueryRunViewModel run)
+    {
+        var window = new QueryResultsWindow { DataContext = run };
+        if (TopLevel.GetTopLevel(this) is Window owner)
+            window.Show(owner);
+        else
+            window.Show();
     }
 
     private async Task<bool> ConfirmGroupingAsync(GroupingPreviewViewModel preview)
@@ -121,25 +134,39 @@ public partial class DocumentsView : UserControl
 
     private async void OnIdentifiersKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.C || (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) == 0 || ViewModel is not { } vm)
-            return;
-        e.Handled = true;
-        // Listedeki sıra korunsun; seçim sırası değil.
-        var selected = vm.VisibleRows.Where(r => Identifiers.SelectedItems?.Contains(r) == true).ToList();
-        await vm.CopyRowsAsync(selected);
+        try
+        {
+            if (e.Key != Key.C || (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) == 0 || ViewModel is not { } vm)
+                return;
+            e.Handled = true;
+            // Listedeki sıra korunsun; seçim sırası değil.
+            var selected = vm.VisibleRows.Where(r => Identifiers.SelectedItems?.Contains(r) == true).ToList();
+            await vm.CopyRowsAsync(selected);
+        }
+        catch (Exception ex)
+        {
+            AppErrors.Report("Belge Tarama", "İşlem sırasında hata oluştu.", ex);
+        }
     }
 
     private async void OnIdentifierDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (Identifiers.SelectedItem is not IdentifierRow row || ViewModel is not { } vm)
-            return;
-        var alreadyOpen = vm.Document is { } doc && FileOps.SamePath(doc.Path, row.FirstFile);
-        if (!await vm.ShowFileAsync(row.FirstFile))
-            return;
-        if (!alreadyOpen)
-            // Yeni belgenin sayfa düzeni bir sonraki yerleşimde hesaplanır; kaydırmayı ondan sonra yap.
-            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-        Pages.ScrollToPage(row.FirstPage);
+        try
+        {
+            if (Identifiers.SelectedItem is not IdentifierRow row || ViewModel is not { } vm)
+                return;
+            var alreadyOpen = vm.Document is { } doc && FileOps.SamePath(doc.Path, row.FirstFile);
+            if (!await vm.ShowFileAsync(row.FirstFile))
+                return;
+            if (!alreadyOpen)
+                // Yeni belgenin sayfa düzeni bir sonraki yerleşimde hesaplanır; kaydırmayı ondan sonra yap.
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            Pages.ScrollToPage(row.FirstPage);
+        }
+        catch (Exception ex)
+        {
+            AppErrors.Report("Belge Tarama", "İşlem sırasında hata oluştu.", ex);
+        }
     }
 
     /// <summary>Tarih alanında takvimden gün seçilince açılır pencereyi kapatır.</summary>
@@ -178,25 +205,32 @@ public partial class DocumentsView : UserControl
 
     private async void OnTreePointerMoved(object? sender, PointerEventArgs e)
     {
-        if (_pressedNode is not { } node || !e.GetCurrentPoint(Tree).Properties.IsLeftButtonPressed)
-            return;
-        var delta = e.GetPosition(Tree) - _pressPoint;
-        if (Math.Abs(delta.X) < DragThreshold && Math.Abs(delta.Y) < DragThreshold)
-            return;
-
-        _pressedNode = null;
-        _draggedNode = node;
         try
         {
-            var data = new DataTransfer();
-            data.Add(DataTransferItem.CreateText(node.FullPath));
-            await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+            if (_pressedNode is not { } node || !e.GetCurrentPoint(Tree).Properties.IsLeftButtonPressed)
+                return;
+            var delta = e.GetPosition(Tree) - _pressPoint;
+            if (Math.Abs(delta.X) < DragThreshold && Math.Abs(delta.Y) < DragThreshold)
+                return;
+
+            _pressedNode = null;
+            _draggedNode = node;
+            try
+            {
+                var data = new DataTransfer();
+                data.Add(DataTransferItem.CreateText(node.FullPath));
+                await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+            }
+            finally
+            {
+                _draggedNode = null;
+                SetDropHighlight(null, rootTarget: false, hint: null, valid: true);
+                StopHoverExpand();
+            }
         }
-        finally
+        catch (Exception ex)
         {
-            _draggedNode = null;
-            SetDropHighlight(null, rootTarget: false, hint: null, valid: true);
-            StopHoverExpand();
+            AppErrors.Report("Belge Tarama", "İşlem sırasında hata oluştu.", ex);
         }
     }
 
@@ -246,10 +280,17 @@ public partial class DocumentsView : UserControl
 
     private async void OnHoverExpandTick(object? sender, EventArgs e)
     {
-        var folder = _hoverFolder;
-        StopHoverExpand();
-        if (folder is not null && _draggedNode is not null && ViewModel is { } vm)
-            await vm.ExpandAsync(folder);
+        try
+        {
+            var folder = _hoverFolder;
+            StopHoverExpand();
+            if (folder is not null && _draggedNode is not null && ViewModel is { } vm)
+                await vm.ExpandAsync(folder);
+        }
+        catch (Exception ex)
+        {
+            AppErrors.Report("Belge Tarama", "İşlem sırasında hata oluştu.", ex);
+        }
     }
 
     private void StopHoverExpand()
@@ -260,21 +301,28 @@ public partial class DocumentsView : UserControl
 
     private async void OnTreeDrop(object? sender, DragEventArgs e)
     {
-        e.Handled = true;
-        var dragged = _draggedNode;
-        SetDropHighlight(null, rootTarget: false, hint: null, valid: true);
-        StopHoverExpand();
-        if (dragged is null || ViewModel is not { } vm)
-            return;
-        var folder = vm.DropFolderFor(NodeAt(e.Source));
-        if (folder is not null && vm.CanMove(dragged, folder))
+        try
         {
-            e.DragEffects = DragDropEffects.Move;
-            await vm.MoveAsync(dragged, folder);
+            e.Handled = true;
+            var dragged = _draggedNode;
+            SetDropHighlight(null, rootTarget: false, hint: null, valid: true);
+            StopHoverExpand();
+            if (dragged is null || ViewModel is not { } vm)
+                return;
+            var folder = vm.DropFolderFor(NodeAt(e.Source));
+            if (folder is not null && vm.CanMove(dragged, folder))
+            {
+                e.DragEffects = DragDropEffects.Move;
+                await vm.MoveAsync(dragged, folder);
+            }
+            else
+            {
+                e.DragEffects = DragDropEffects.None;
+            }
         }
-        else
+        catch (Exception ex)
         {
-            e.DragEffects = DragDropEffects.None;
+            AppErrors.Report("Belge Tarama", "İşlem sırasında hata oluştu.", ex);
         }
     }
 
@@ -298,31 +346,45 @@ public partial class DocumentsView : UserControl
 
     private async void OnTreeKeyDown(object? sender, KeyEventArgs e)
     {
-        if (ViewModel is not { SelectedNode: { IsDirectory: true } node } vm)
-            return;
-        if (e.Key == Key.Right && !node.IsExpanded)
+        try
         {
-            e.Handled = true;
-            await vm.ExpandAsync(node);
+            if (ViewModel is not { SelectedNode: { IsDirectory: true } node } vm)
+                return;
+            if (e.Key == Key.Right && !node.IsExpanded)
+            {
+                e.Handled = true;
+                await vm.ExpandAsync(node);
+            }
+            else if (e.Key == Key.Left && node.IsExpanded)
+            {
+                e.Handled = true;
+                vm.Collapse(node);
+            }
+            else if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                await vm.ToggleNodeCommand.ExecuteAsync(node);
+            }
         }
-        else if (e.Key == Key.Left && node.IsExpanded)
+        catch (Exception ex)
         {
-            e.Handled = true;
-            vm.Collapse(node);
-        }
-        else if (e.Key == Key.Enter)
-        {
-            e.Handled = true;
-            await vm.ToggleNodeCommand.ExecuteAsync(node);
+            AppErrors.Report("Belge Tarama", "İşlem sırasında hata oluştu.", ex);
         }
     }
 
     private async void OnTreeDoubleTapped(object? sender, TappedEventArgs e)
     {
-        // Oka çift tıklama zaten iki kez açıp kapatır; satıra çift tıklama açar/kapatır.
-        if (e.Source is Control source && source.FindAncestorOfType<Button>(includeSelf: true) is not null)
-            return;
-        if (ViewModel is { SelectedNode: { IsDirectory: true } node } vm)
-            await vm.ToggleNodeCommand.ExecuteAsync(node);
+        try
+        {
+            // Oka çift tıklama zaten iki kez açıp kapatır; satıra çift tıklama açar/kapatır.
+            if (e.Source is Control source && source.FindAncestorOfType<Button>(includeSelf: true) is not null)
+                return;
+            if (ViewModel is { SelectedNode: { IsDirectory: true } node } vm)
+                await vm.ToggleNodeCommand.ExecuteAsync(node);
+        }
+        catch (Exception ex)
+        {
+            AppErrors.Report("Belge Tarama", "İşlem sırasında hata oluştu.", ex);
+        }
     }
 }

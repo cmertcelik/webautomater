@@ -9,6 +9,7 @@ using Avalonia.Media.Immutable;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using WebAutomater.Core.Diagnostics;
 using WebAutomater.Core.Documents;
 using WebAutomater.Gui.ViewModels;
 
@@ -531,6 +532,13 @@ public sealed class PdfPagesView : Control
                     catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException or OutOfMemoryException or ArgumentException)
                     {
                         // Açılamayan sayfa beyaz kalır; aşağıda tekrar denenmemesi için işaretlenir.
+                        if (ex is OutOfMemoryException)
+                            AppLog.Warning("PDF görüntüleyici", $"Sayfa {request.Page + 1} çizilemedi: bellek yetmedi.", ex);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Beklenmeyen hata çizim döngüsünü durdurmasın; o sayfa beyaz kalır.
+                        AppLog.Error("PDF görüntüleyici", $"Sayfa {request.Page + 1} çizilemedi: {request.Document.Path}", ex);
                     }
 
                     // Sonuç arayüze işlenene kadar beklenir: aynı sayfa iki kez çizilmesin.
@@ -540,6 +548,10 @@ public sealed class PdfPagesView : Control
         }
         catch (OperationCanceledException)
         {
+        }
+        catch (Exception ex)
+        {
+            AppErrors.Report("PDF görüntüleyici", "Sayfa çizimi durdu; belgeyi yeniden açmayı deneyin.", ex);
         }
     }
 
@@ -634,7 +646,9 @@ public sealed class PdfPagesView : Control
             return layout;
         try
         {
-            layout = Document?.GetTextLayout(page) ?? PdfTextLayout.Empty;
+            // Arka planda uzun bir tarama PDF'i meşgul ediyorsa beklemeyiz: arayüz donmasın, sonra yeniden denenir.
+            if (Document is not { } document || !document.TryGetTextLayout(page, TimeSpan.FromMilliseconds(40), out layout))
+                return PdfTextLayout.Empty;
         }
         catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
         {

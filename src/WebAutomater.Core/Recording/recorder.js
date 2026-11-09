@@ -290,7 +290,8 @@
     } else if (t instanceof HTMLInputElement && (t.type === 'checkbox' || t.type === 'radio')) {
       send({ type: t.checked ? 'check' : 'uncheck', ...describe(t) });
     } else if (t instanceof HTMLInputElement && t.type === 'file') {
-      send({ type: 'upload', value: Array.from(t.files || []).map(f => f.name).join('|'), ...describe(t) });
+      // Tarayıcı güvenlik nedeniyle yalnızca dosya adlarını verir; tam yolu dosya seçme penceresini yakalayan uygulama ekler.
+      send({ type: 'upload', value: Array.from(t.files || []).map(f => f.name).join('|'), multiple: t.multiple, ...describe(t) });
     }
   }, true);
 

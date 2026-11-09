@@ -179,13 +179,20 @@ public sealed partial class StepViewModel : ObservableObject
 
     public bool IsValueEditable => HasValue && !IsBound;
 
+    public bool IsUpload => Step.Type == StepType.Upload;
+
+    public bool CanBrowseUpload => IsUpload && !IsBound;
+
+    [RelayCommand]
+    private Task BrowseUploadAsync() => _owner.BrowseUploadAsync(this);
+
     /// <summary>Şifre alanlarına yazılan değer ekranda gizlenir.</summary>
     public char PasswordChar => Step.TargetKind == "password" ? '•' : '\0';
 
     public string ValueWatermark => Step.Type switch
     {
         StepType.Wait => "milisaniye",
-        StepType.Upload => "tam dosya yolu",
+        StepType.Upload => @"dosya yolu, ör. C:\CV\{{TC}}.pdf",
         StepType.WaitForText => "beklenecek yazı",
         StepType.Condition => "aranan metin",
         _ => "",
@@ -238,6 +245,7 @@ public sealed partial class StepViewModel : ObservableObject
             Step.Parameter = parameter;
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsBound));
+            OnPropertyChanged(nameof(CanBrowseUpload));
             OnPropertyChanged(nameof(IsValueEditable));
             OnPropertyChanged(nameof(SampleText));
             _owner.MarkChanged();

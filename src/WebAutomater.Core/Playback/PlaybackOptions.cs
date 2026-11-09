@@ -55,6 +55,12 @@ public sealed class PlaybackOptions
     /// <summary>Hatalı bir tekrar baştan kaç kez daha denensin (geçici ağ/sunucu aksaklıkları için).</summary>
     public int RetryCount { get; set; }
 
+    /// <summary>
+    /// Yükleme adımlarındaki göreli dosya yollarının (ör. veri kaynağındaki "ahmet_cv.pdf") arandığı klasör.
+    /// Boşsa veri kaynağı dosyasının klasörü kullanılır.
+    /// </summary>
+    public string? FilesDirectory { get; set; }
+
     /// <summary>Hatalı adımda ekran görüntüsünün kaydedileceği klasör.</summary>
     public string? ScreenshotDirectory { get; set; }
 }

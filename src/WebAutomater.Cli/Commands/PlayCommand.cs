@@ -101,6 +101,10 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
         [Description("Hatalı adımların ekran görüntüleri için klasör. Varsayılan: ./wa-hatalar")]
         public string? Screenshots { get; init; }
 
+        [CommandOption("--files")]
+        [Description("Yükleme adımlarındaki göreli dosya yollarının arandığı klasör. Varsayılan: veri kaynağının klasörü.")]
+        public string? Files { get; init; }
+
         [CommandOption("-v|--verbose")]
         [Description("Her adımı yazdır.")]
         public bool Verbose { get; init; }
@@ -147,6 +151,7 @@ internal sealed class PlayCommand : AsyncCommand<PlayCommand.Settings>
             ContinueOnError = !settings.StopOnError,
             FreshSessionPerIteration = !settings.KeepSession,
             KeepPageOpen = settings.KeepPage,
+            FilesDirectory = settings.Files is null ? null : Path.GetFullPath(settings.Files),
             ScreenshotDirectory = settings.Screenshots ?? Path.Combine(Environment.CurrentDirectory, "wa-hatalar"),
         };
 

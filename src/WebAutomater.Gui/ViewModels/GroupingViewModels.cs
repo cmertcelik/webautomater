@@ -41,62 +41,103 @@ public sealed partial class GroupTagViewModel : ObservableObject
     public GroupingTag ToTag() => new(Name.Trim(), Keywords);
 }
 
-/// <summary>Önizlemede bir hedef klasör ve oraya gidecek dosyalar.</summary>
-public sealed record GroupingPreviewFolder(string Title, bool IsNew, IReadOnlyList<GroupingPreviewFile> Files)
+public enum PreviewRowKind
 {
-    public string CountText => $"{Files.Count} dosya";
+    Folder,
+    Label,
+    File,
+    Section,
 }
 
-public sealed record GroupingPreviewFile(string Name, string Detail, string FullPath);
+/// <summary>Önizleme listesinin bir satırı. Liste düz ve sanallaştırılmıştır: binlerce dosyada da donmaz.</summary>
+public sealed record GroupingPreviewRow(PreviewRowKind Kind, string Text, string Detail = "", string Badge = "", string? FullPath = null)
+{
+    public bool IsFolder => Kind == PreviewRowKind.Folder;
+
+    public bool IsLabel => Kind == PreviewRowKind.Label;
+
+    public bool IsFile => Kind == PreviewRowKind.File;
+
+    public bool IsSection => Kind == PreviewRowKind.Section;
+
+    public bool HasBadge => Badge.Length > 0;
+
+    public bool HasDetail => Detail.Length > 0;
+}
 
 /// <summary>"Otomatik grupla" sonrası, dosyalar taşınmadan önce gösterilen özet.</summary>
 public sealed class GroupingPreviewViewModel
 {
+    private const int MaxUnchangedRows = 2000;
+
     public GroupingPreviewViewModel(GroupingPlan plan, IReadOnlyList<string> warnings)
     {
         Plan = plan;
-        Folders = plan.Moves
-            .GroupBy(m => m.DestinationFolder, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new GroupingPreviewFolder(
-                Relative(plan.Root, g.Key),
-                !Directory.Exists(g.Key),
-                g.Select(m => new GroupingPreviewFile(Path.GetFileName(m.Source), $"{Relative(plan.Root, Path.GetDirectoryName(m.Source)!)} · {m.Reason}", m.Source)).ToList()))
-            .ToList();
-        Unchanged = plan.Unchanged
-            .Select(u => new GroupingPreviewFile(Path.GetFileName(u.Path), $"{Relative(plan.Root, Path.GetDirectoryName(u.Path)!)} · {u.Reason}", u.Path))
-            .ToList();
         Warnings = warnings;
+        var rows = new List<GroupingPreviewRow>();
+        foreach (var folder in plan.Folders)
+        {
+            var finalName = Path.GetFileName(folder.FinalFolder);
+            var title = folder.Renames ? $"{Path.GetFileName(folder.Group.Folder!.Path)}  →  {finalName}" : finalName;
+            var badge = folder.IsNew ? "yeni klasör" : folder.Renames ? "etiket eklenecek" : "";
+            var existing = folder.Group.Folder?.Files.Count ?? 0;
+            var detail = existing > 0
+                ? $"{folder.Group.IncomingFiles.Count} dosya taşınacak · klasörde {existing} dosya var"
+                : $"{folder.Group.IncomingFiles.Count} dosya taşınacak";
+            rows.Add(new GroupingPreviewRow(PreviewRowKind.Folder, title, detail, badge, folder.FinalFolder));
+            foreach (var label in folder.NewLabels)
+                rows.Add(new GroupingPreviewRow(PreviewRowKind.Label, $"{label.TagName}: \"{label.Keyword}\"",
+                    $"{Path.GetFileName(label.File)} dosyasında geçiyor", FullPath: label.File));
+            foreach (var file in folder.Group.IncomingFiles)
+                rows.Add(new GroupingPreviewRow(PreviewRowKind.File, Path.GetFileName(file), FullPath: file));
+        }
+
+        if (plan.Unchanged.Count > 0)
+        {
+            rows.Add(new GroupingPreviewRow(PreviewRowKind.Section, $"Yerinde kalacak dosyalar ({plan.Unchanged.Count})"));
+            rows.AddRange(plan.Unchanged.Take(MaxUnchangedRows)
+                .Select(u => new GroupingPreviewRow(PreviewRowKind.File, Path.GetFileName(u.Path), u.Reason, FullPath: u.Path)));
+            if (plan.Unchanged.Count > MaxUnchangedRows)
+                rows.Add(new GroupingPreviewRow(PreviewRowKind.File, $"... ve {plan.Unchanged.Count - MaxUnchangedRows} dosya daha"));
+        }
+
+        Rows = rows;
     }
 
     public GroupingPlan Plan { get; }
 
-    public IReadOnlyList<GroupingPreviewFolder> Folders { get; }
-
-    public IReadOnlyList<GroupingPreviewFile> Unchanged { get; }
+    public IReadOnlyList<GroupingPreviewRow> Rows { get; }
 
     public IReadOnlyList<string> Warnings { get; }
 
     public bool HasWarnings => Warnings.Count > 0;
 
-    public bool HasMoves => Plan.Moves.Count > 0;
+    public string WarningsTitle => $"{Warnings.Count} dosyanın içi okunamadı; bu dosyalar yalnızca adlarındaki numaraya göre gruplanır";
 
-    public bool HasUnchanged => Unchanged.Count > 0;
+    public string WarningsText => string.Join(Environment.NewLine, Warnings.Take(200)) +
+                                  (Warnings.Count > 200 ? $"{Environment.NewLine}... ve {Warnings.Count - 200} dosya daha" : "");
+
+    public bool HasMoves => Plan.HasChanges;
 
     public string RootText => $"Klasör: {Plan.Root}";
 
-    public string Summary => Plan.Moves.Count == 0
-        ? "Taşınacak dosya yok. Etiketlerin kelimelerini ya da dosya numarası ayarını kontrol edin."
-        : $"{Plan.Moves.Count} dosya {Folders.Count} klasöre taşınacak" +
-          (Unchanged.Count > 0 ? $", {Unchanged.Count} dosya yerinde kalacak." : ".") +
-          " Aynı adlı dosya varsa üzerine yazılmaz, adına sayı eklenir.";
-
-    public string UnchangedTitle => $"Yerinde kalacak dosyalar ({Unchanged.Count})";
-
-    public string ApplyText => $"{Plan.Moves.Count} dosyayı taşı";
-
-    private static string Relative(string root, string path)
+    public string Summary
     {
-        var relative = Path.GetRelativePath(root, path);
-        return relative == "." ? "(ana klasör)" : relative.Replace(Path.DirectorySeparatorChar, '/').Replace("/", " / ");
+        get
+        {
+            var parts = new List<string>();
+            var created = Plan.Folders.Count(f => f.IsNew);
+            if (Plan.MoveCount > 0)
+                parts.Add($"{Plan.MoveCount} dosya taşınacak");
+            if (created > 0)
+                parts.Add($"{created} numara klasörü oluşturulacak");
+            if (Plan.RenameCount > 0)
+                parts.Add($"{Plan.RenameCount} klasörün adına etiket eklenecek");
+            if (Plan.Unchanged.Count > 0)
+                parts.Add($"{Plan.Unchanged.Count} dosya yerinde kalacak");
+            return string.Join(", ", parts) + ". Aynı adlı dosya varsa üzerine yazılmaz, adına sayı eklenir.";
+        }
     }
+
+    public string ApplyText => Plan.MoveCount > 0 ? $"Uygula ({Plan.MoveCount} dosya)" : "Uygula";
 }

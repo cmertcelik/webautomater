@@ -254,8 +254,14 @@
 
                   <StackPanel Spacing="3" IsVisible="{Binding IsValueEditable}">
                     <TextBlock Text="Değer" Classes="section" Margin="0,4,0,0" />
-                    <TextBox Text="{Binding EditableValue}" PasswordChar="{Binding PasswordChar}" Watermark="{Binding ValueWatermark}" TextWrapping="Wrap" />
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBox Text="{Binding EditableValue}" PasswordChar="{Binding PasswordChar}" Watermark="{Binding ValueWatermark}" TextWrapping="Wrap" />
+                      <Button Grid.Column="1" Margin="4,0,0,0" Content="Gözat..." VerticalAlignment="Top" IsVisible="{Binding CanBrowseUpload}"
+                              Command="{Binding BrowseUploadCommand}" ToolTip.Tip="Yüklenecek dosyayı seç" />
+                    </Grid>
                   </StackPanel>
+                  <TextBlock Classes="hint" IsVisible="{Binding IsUpload}" TextWrapping="Wrap"
+                             Text="Her tekrarda farklı dosya için adımı dosya yolu kolonuna bağlayın ya da değere kolon adı yazın: C:\CVler\{{TC}}.pdf. Göreli yollar (ör. ahmet_cv.pdf) veri dosyasının klasöründe aranır. * joker karakteri kullanılabilir ({{TC}}*.pdf). Birden çok dosya | ile ayrılır. Değer boşsa dosya seçimi temizlenir." />
 
                   <StackPanel Spacing="3" IsVisible="{Binding CanBind}">
                     <TextBlock Text="Veri kolonu" Classes="section" Margin="0,4,0,0" />

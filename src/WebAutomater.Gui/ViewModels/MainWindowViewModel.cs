@@ -5,6 +5,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WebAutomater.Core.Data;
+using WebAutomater.Core.Diagnostics;
 using WebAutomater.Core.Models;
 using WebAutomater.Core.Playback;
 using WebAutomater.Core.Recording;
@@ -371,7 +372,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            AddLog($"Senaryo açılamadı: {ex.Message}");
+            AddError("Senaryo açılamadı", ex);
         }
     }
 
@@ -385,7 +386,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            AddLog($"Kaydedilemedi: {ex.Message}");
+            AddError("Kaydedilemedi", ex);
         }
     }
 
@@ -397,9 +398,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
         await SaveNowAsync();
     }
 
-    public void AddLog(string message)
+    private const string LogArea = "Web Otomasyon";
+
+    /// <summary>Alt paneldeki günlüğe satır ekler; aynı satır günlük dosyasına da yazılır.</summary>
+    /// <param name="toFile">false: yalnızca panele (oynatıcı aynı hatayı günlüğe zaten yazdı).</param>
+    public void AddLog(string message, LogLevel level = LogLevel.Info, bool toFile = true)
     {
+        if (toFile)
+            AppLog.Write(level, LogArea, message, null);
         Log.Add($"{DateTime.Now:HH:mm:ss}  {message}");
+        while (Log.Count > MaxLogLines)
+            Log.RemoveAt(0);
+    }
+
+    /// <summary>Hata: panelde kısa mesaj, günlük dosyasında hatanın tüm ayrıntısı.</summary>
+    private void AddError(string what, Exception ex)
+    {
+        AppLog.Error(LogArea, what, ex);
+        Log.Add($"{DateTime.Now:HH:mm:ss}  {what}: {AppLog.Describe(ex)}");
         while (Log.Count > MaxLogLines)
             Log.RemoveAt(0);
     }
@@ -463,7 +479,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            AddLog($"Silinemedi: {ex.Message}");
+            AddError("Silinemedi", ex);
             return;
         }
         if (item.Path == CurrentPath)
@@ -511,7 +527,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            AddLog($"Kayıt başlatılamadı: {ex.Message}");
+            AddError("Kayıt başlatılamadı", ex);
             StatusText = "Kayıt başlatılamadı. Ayrıntılar aşağıdaki günlükte.";
         }
         finally
@@ -543,7 +559,71 @@ public sealed partial class MainWindowViewModel : ObservableObject
         recorder.Log = msg => Dispatcher.UIThread.Post(() => AddLog(msg));
         recorder.StepChanged += (_, e) => Dispatcher.UIThread.Post(() => ApplyRecorderChange(e));
         recorder.ModeChanged += mode => Dispatcher.UIThread.Post(() => IsCheckMode = mode == RecorderMode.Check);
+        // Sayfa dosya isteyince bizim seçicimiz açılır: tam yol bilinir ve adıma yazılır.
+        recorder.ChooseFiles = request => Dispatcher.UIThread.InvokeAsync(() => ChooseUploadFilesAsync(request));
         _recorder = recorder;
+    }
+
+    private async Task<IReadOnlyList<string>?> ChooseUploadFilesAsync(FileChooserRequest request)
+    {
+        if (Host is null)
+            return null;
+        (Host as Window)?.Activate();
+        var title = string.IsNullOrWhiteSpace(request.TargetName)
+            ? "Yüklenecek dosyayı seçin"
+            : $"Yüklenecek dosyayı seçin: {request.TargetName}";
+        if (request.Directory)
+        {
+            var folders = await Host.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = title });
+            return folders.Select(f => f.TryGetLocalPath()).OfType<string>().Take(1).ToList();
+        }
+
+        var files = await Host.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = request.Multiple,
+            FileTypeFilter = UploadFileTypes(request.Accept),
+        });
+        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
+        if (paths.Count > 0)
+            AddLog($"Yüklenecek dosya: {string.Join(", ", paths)}");
+        return paths;
+    }
+
+    /// <summary>Girdinin accept özelliğinden (".pdf,.docx,image/*") dosya seçici süzgeci.</summary>
+    private static List<FilePickerFileType>? UploadFileTypes(string? accept)
+    {
+        if (string.IsNullOrWhiteSpace(accept))
+            return null;
+        var patterns = new List<string>();
+        foreach (var part in accept.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (part.StartsWith('.'))
+                patterns.Add("*" + part.ToLowerInvariant());
+            else if (part.Equals("image/*", StringComparison.OrdinalIgnoreCase))
+                patterns.AddRange(["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp"]);
+            else if (part.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
+                patterns.Add("*.pdf");
+        }
+
+        return patterns.Count == 0
+            ? null
+            : [new FilePickerFileType($"Sitenin kabul ettiği dosyalar ({accept})") { Patterns = patterns.Distinct().ToList() }, FilePickerFileTypes.All];
+    }
+
+    /// <summary>Yükleme adımı için dosya seçer; seçilen tam yollar adımın değeri olur.</summary>
+    public async Task BrowseUploadAsync(StepViewModel step)
+    {
+        if (Host is null)
+            return;
+        var files = await Host.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Yüklenecek dosyayı seçin",
+            AllowMultiple = step.Step.Multiple,
+        });
+        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
+        if (paths.Count > 0)
+            step.EditableValue = string.Join("|", paths);
     }
 
     partial void OnIsCheckModeChanged(bool value)
@@ -596,13 +676,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 ? "Bu noktaya gelindi. Dalın işlemlerini tarayıcıda yapın, bitince \"Kaydı durdur\"a basın."
                 : "Otomatik gidiş yarıda kaldı. Kalanı tarayıcıda elle yapın; bu sırada yaptıklarınız da kaydedilir.";
             if (problem is not null)
-                AddLog($"Otomatik gidiş durdu: {problem}");
+                AddLog($"Otomatik gidiş durdu: {problem}", LogLevel.Warning);
             await recorder.Completion;
             StatusText = "Dal kaydı tamamlandı.";
         }
         catch (Exception ex)
         {
-            AddLog($"Dal kaydı başlatılamadı: {ex.Message}");
+            AddError("Dal kaydı başlatılamadı", ex);
             StatusText = "Dal kaydı başlatılamadı. Ayrıntılar aşağıdaki günlükte.";
         }
         finally
@@ -878,7 +958,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            AddLog($"Veri kaynağı okunamadı: {ex.Message}");
+            AddError("Veri kaynağı okunamadı", ex);
             StatusText = "Veri kaynağı okunamadı. Ayrıntılar günlükte.";
         }
     }
@@ -957,7 +1037,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusText = "Oynatılamadı. Ayrıntılar günlükte.";
-            AddLog(ex.Message);
+            AddError("Oynatılamadı", ex);
         }
         finally
         {
@@ -1002,7 +1082,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     Steps[e.StepIndex].State = StepRunState.Failed;
                     Steps[e.StepIndex].Error = e.Message;
                 }
-                AddLog($"Tekrar {e.Iteration}{row}: adım {e.StepIndex + 1} hatalı, B planından devam ediliyor — {e.Message}");
+                AddLog($"Tekrar {e.Iteration}{row}: adım {e.StepIndex + 1} hatalı, B planından devam ediliyor — {e.Message}", LogLevel.Warning, toFile: false);
                 break;
             case PlaybackEventKind.StepFailed:
                 if (e.StepIndex < Steps.Count)
@@ -1010,7 +1090,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     Steps[e.StepIndex].State = StepRunState.Failed;
                     Steps[e.StepIndex].Error = e.Message;
                 }
-                AddLog($"Tekrar {e.Iteration}{row}: adım {e.StepIndex + 1} hatalı — {e.Message}");
+                AddLog($"Tekrar {e.Iteration}{row}: adım {e.StepIndex + 1} hatalı — {e.Message}", LogLevel.Error, toFile: false);
                 break;
             case PlaybackEventKind.IterationCompleted:
                 ProgressValue = e.Iteration;

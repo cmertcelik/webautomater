@@ -18,7 +18,8 @@ public sealed record GroupingTag(string Name, IReadOnlyList<string> Keywords)
     public string FolderName => GroupingPlanner.SafeFolderName(Name);
 }
 
-public sealed record GroupingOptions(int MinDigits = 5, int MaxDigits = 7, bool CaseSubfolders = true);
+/// <param name="SingleFileFolders">Numarası başka hiçbir dosyada geçmeyen dosyalar için de klasör açılsın.</param>
+public sealed record GroupingOptions(int MinDigits = 5, int MaxDigits = 7, bool SingleFileFolders = false);
 
 /// <summary>Metni karşılaştırma için sadeleştirir: küçük harf, Türkçe karakterler ve aksanlar düz harfe, boşluklar teke.</summary>
 public static class TextFold
@@ -132,27 +133,33 @@ public sealed class TagMatcher
         }
     }
 
-    /// <summary>Tüm sayfalara bakar; tüm etiketler bulununca durur. Açılamayan dosya hata olarak döner.</summary>
+    /// <summary>Etiket aramada dosya başına okunan en fazla sayfa; karar/ilam gibi belgelerde kelimeler baştadır.</summary>
+    public const int MaxPages = 100;
+
+    /// <summary>Bundan büyük dosyalar etiket için okunmaz (tamamı belleğe alınır; çok büyük taranmış dosyalar belleği tüketir).</summary>
+    public const long MaxFileBytes = 300L * 1024 * 1024;
+
+    // Bu kadar sayfada hiç yazı yoksa belge taranmış görüntüdür; kalan sayfaları okumak boşa zaman.
+    private const int NoTextProbePages = 5;
+
+    /// <summary>
+    /// Sayfaları sırayla okur; tüm etiketler bulununca durur. Hiçbir durumda istisna atmaz (iptal hariç):
+    /// açılamayan, bozuk ya da çok büyük dosya <see cref="FileTagScan.Error"/> ile döner.
+    /// </summary>
     public FileTagScan ScanFile(string path, CancellationToken token = default)
     {
-        PdfDocument document;
         try
         {
-            document = PdfDocument.Open(path);
-        }
-        catch (PdfOpenException ex)
-        {
-            return new FileTagScan(path, [], HasNoText: false, ex.Message);
-        }
-
-        using (document)
-        {
+            if (new FileInfo(path).Length > MaxFileBytes)
+                return new FileTagScan(path, [], HasNoText: false, $"dosya {MaxFileBytes / 1024 / 1024} MB'tan büyük, içi okunmadı");
+            using var document = PdfDocument.Open(path);
             var hits = new Dictionary<int, TagHit>();
             var withText = 0;
             var read = 0;
             // Bölünmüş satırlar sayfa sınırını aşabilsin diye önceki sayfanın sonu da eklenir.
             var tail = "";
-            for (var i = 0; i < document.PageCount && hits.Count < TagCount && !IsEmpty; i++)
+            var pages = Math.Min(document.PageCount, MaxPages);
+            for (var i = 0; i < pages && hits.Count < TagCount && !IsEmpty; i++)
             {
                 token.ThrowIfCancellationRequested();
                 string text;
@@ -168,12 +175,27 @@ public sealed class TagMatcher
                 read++;
                 if (!string.IsNullOrWhiteSpace(text))
                     withText++;
+                else if (withText == 0 && read >= NoTextProbePages)
+                    break;
                 Match(tail + text, hits);
                 tail = text.Length > 200 ? text[^200..] : text;
             }
 
             var noText = read > 0 && withText == 0;
             return new FileTagScan(path, hits.Values.OrderBy(h => h.TagIndex).ToList(), noText);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (PdfOpenException ex)
+        {
+            return new FileTagScan(path, [], HasNoText: false, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.AppLog.Error("Etiket arama", $"PDF okunamadı: {path}", ex);
+            return new FileTagScan(path, [], HasNoText: false, Diagnostics.AppLog.Describe(ex));
         }
     }
 }
@@ -200,22 +222,104 @@ public static partial class CaseNumber
         name.Length >= minDigits && name.Length <= maxDigits && name.All(char.IsAsciiDigit);
 }
 
-public sealed record GroupingCandidate(string Path, IReadOnlyList<TagHit> Hits);
+/// <summary>Bir dosya numarası klasörü: "34765" ya da etiketleri eklenmiş "34765-vesayet-iflas".</summary>
+public sealed partial record CaseFolderName(string Number, string Labels)
+{
+    [GeneratedRegex(@"^(\d+)(?:\s*-\s*(.*))?$")]
+    private static partial Regex Pattern();
 
-/// <summary>Bir dosya numarasının daha önce yerleştirildiği etiket klasörü.</summary>
-public sealed record ExistingCase(int TagIndex, string Folder);
+    public bool HasLabels => Labels.Length > 0;
 
-public sealed record PlannedMove(string Source, string DestinationFolder, string Reason);
+    public static bool TryParse(string folderName, GroupingOptions options, out CaseFolderName parsed)
+    {
+        parsed = null!;
+        var match = Pattern().Match(folderName.Trim());
+        if (!match.Success)
+            return false;
+        var number = match.Groups[1].Value;
+        if (number.Length < options.MinDigits || number.Length > options.MaxDigits)
+            return false;
+        parsed = new CaseFolderName(number, match.Groups[2].Value.Trim().Trim('-').Trim());
+        return true;
+    }
+
+    /// <summary>Etiket klasör adında zaten yazılı mı ("34765-vesayet-iflas" içinde "iflas").</summary>
+    public bool HasLabel(string label) =>
+        ($"-{Labels}-").Contains($"-{label}-", StringComparison.CurrentCultureIgnoreCase);
+
+    public CaseFolderName WithLabels(IEnumerable<string> labels)
+    {
+        var added = labels.Where(l => !HasLabel(l)).ToList();
+        return added.Count == 0 ? this : this with { Labels = string.Join("-", new[] { Labels }.Where(l => l.Length > 0).Concat(added)) };
+    }
+
+    // Windows'ta yol uzunluğu sınırlı; çok etiket birikince klasör adı kısaltılır.
+    public override string ToString()
+    {
+        var name = Labels.Length == 0 ? Number : $"{Number}-{Labels}";
+        return name.Length > 120 ? name[..120].TrimEnd('-', ' ', '.') : name;
+    }
+}
+
+/// <summary>Kök klasörde daha önce oluşturulmuş bir numara klasörü ve içindeki dosyalar.</summary>
+public sealed record ExistingCaseFolder(string Path, CaseFolderName Name, IReadOnlyList<string> Files);
+
+/// <summary>Aynı dosya numarasına ait dosyalar: var olan klasör (varsa) ve oraya taşınacak dosyalar.</summary>
+public sealed record CaseGroup(
+    string Number,
+    ExistingCaseFolder? Folder,
+    IReadOnlyList<string> IncomingFiles,
+    IReadOnlyList<ExistingCaseFolder> MergedFolders)
+{
+    public IEnumerable<string> AllFiles => (Folder?.Files ?? []).Concat(IncomingFiles);
+
+    /// <summary>
+    /// Etiket aranacak PDF'ler. Etiketi zaten yazılmış klasörde yalnızca yeni gelen dosyalara bakılır;
+    /// etiketsiz klasörde (etiketler sonradan eklenmiş olabilir) hepsine.
+    /// </summary>
+    public IReadOnlyList<string> FilesToScan =>
+        (Folder is { Name.HasLabels: true } ? IncomingFiles : AllFiles)
+        .Where(f => f.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+}
 
 public sealed record UnchangedFile(string Path, string Reason);
 
-public sealed record GroupingPlan(string Root, IReadOnlyList<PlannedMove> Moves, IReadOnlyList<UnchangedFile> Unchanged);
+/// <summary>1. aşama: yalnızca dosya adlarına göre gruplar.</summary>
+public sealed record NumberGrouping(string Root, IReadOnlyList<CaseGroup> Groups, IReadOnlyList<UnchangedFile> Unchanged);
 
-public sealed record GroupingResult(IReadOnlyList<(string Source, string Destination)> Moved, IReadOnlyList<string> Failed);
+/// <summary>Bir grupta bulunan etiket ve kanıtı.</summary>
+public sealed record TagEvidence(int TagIndex, string TagName, string File, string Keyword);
+
+/// <summary>Bir numara klasöründe yapılacaklar: oluşturma/yeniden adlandırma ve içeri taşınacak dosyalar.</summary>
+public sealed record CaseFolderPlan(
+    CaseGroup Group,
+    string FinalFolder,
+    IReadOnlyList<TagEvidence> NewLabels)
+{
+    public bool IsNew => Group.Folder is null;
+
+    public bool Renames => Group.Folder is { } f && !string.Equals(f.Path, FinalFolder, StringComparison.Ordinal);
+}
+
+public sealed record GroupingPlan(string Root, IReadOnlyList<CaseFolderPlan> Folders, IReadOnlyList<UnchangedFile> Unchanged)
+{
+    public int MoveCount => Folders.Sum(f => f.Group.IncomingFiles.Count);
+
+    public int RenameCount => Folders.Count(f => f.Renames);
+
+    public bool HasChanges => MoveCount > 0 || RenameCount > 0 || Folders.Any(f => f.IsNew);
+}
+
+public sealed record GroupingResult(
+    IReadOnlyList<(string Source, string Destination)> Moved,
+    IReadOnlyList<(string Source, string Destination)> Renamed,
+    IReadOnlyList<string> Failed);
 
 /// <summary>
-/// Dosyaları etiketlerine ve dosya numaralarına göre klasörlere dağıtır.
-/// Aynı numaralı dosyalar aynı konuya aittir: içlerinden birinde etiket kelimesi geçiyorsa hepsi o etiketin klasörüne gider.
+/// Otomatik gruplama. Önce yalnızca dosya adlarına bakılır: adında aynı dosya numarası geçen dosyalar
+/// numara klasöründe toplanır (etiket tanımlı olmasa da). Sonra yalnızca bu grupların PDF'lerinde etiket aranır;
+/// bulunan etiketler klasör adının sonuna eklenir ("34765" → "34765-vesayet"). Etiket için ayrıca klasör açılmaz.
 /// </summary>
 public static class GroupingPlanner
 {
@@ -224,15 +328,6 @@ public static class GroupingPlanner
         IgnoreInaccessible = true,
         AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
         RecurseSubdirectories = false,
-        MatchCasing = MatchCasing.CaseInsensitive,
-    };
-
-    private static readonly EnumerationOptions Recursive = new()
-    {
-        IgnoreInaccessible = true,
-        AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
-        RecurseSubdirectories = true,
-        MatchCasing = MatchCasing.CaseInsensitive,
     };
 
     private static readonly StringComparison PathComparison =
@@ -248,60 +343,37 @@ public static class GroupingPlanner
         return safe.Length == 0 || safe is "." or ".." ? "_" : safe;
     }
 
-    /// <summary>
-    /// Gruplanacak dosyalar: klasörün doğrudan içindeki PDF'ler ve daha önce oluşturulmuş numara klasörlerindeki
-    /// (ör. "35476") PDF'ler; numaranın etiketi sonradan bulunursa o klasör de etikete taşınır. Etiket klasörlerine dokunulmaz.
-    /// </summary>
-    public static List<string> FindCandidates(string root, GroupingOptions options)
+    /// <summary>Klasörün doğrudan içindeki dosyaları ve numara klasörlerini okuyup gruplar.</summary>
+    public static NumberGrouping ScanFolder(string root, GroupingOptions options, CancellationToken token = default)
     {
-        var files = Directory.EnumerateFiles(root, "*.pdf", TopLevel).ToList();
+        var loose = Directory.EnumerateFiles(root, "*", TopLevel).ToList();
+        var folders = new List<ExistingCaseFolder>();
         foreach (var dir in Directory.EnumerateDirectories(root, "*", TopLevel))
         {
-            if (CaseNumber.IsCaseFolderName(Path.GetFileName(dir), options.MinDigits, options.MaxDigits))
-                files.AddRange(Directory.EnumerateFiles(dir, "*.pdf", TopLevel));
+            token.ThrowIfCancellationRequested();
+            if (CaseFolderName.TryParse(Path.GetFileName(dir), options, out var name))
+                folders.Add(new ExistingCaseFolder(dir, name, Directory.EnumerateFiles(dir, "*", TopLevel).ToList()));
         }
 
-        files.Sort(StringComparer.CurrentCultureIgnoreCase);
-        return files;
+        return GroupByNumber(root, loose, folders, options);
     }
 
-    /// <summary>Etiket klasörlerinde zaten duran dosyaların numaraları: aynı numaralı yeni dosyalar onların yanına gider.</summary>
-    public static Dictionary<string, List<ExistingCase>> FindExistingCases(string root, IReadOnlyList<GroupingTag> tags,
-        GroupingOptions options)
+    public static NumberGrouping GroupByNumber(string root, IReadOnlyList<string> looseFiles,
+        IReadOnlyList<ExistingCaseFolder> folders, GroupingOptions options)
     {
-        var cases = new Dictionary<string, List<ExistingCase>>();
-        for (var i = 0; i < tags.Count; i++)
-        {
-            var folder = Path.Combine(root, tags[i].FolderName);
-            if (!Directory.Exists(folder))
-                continue;
-            foreach (var file in Directory.EnumerateFiles(folder, "*.pdf", Recursive))
-            {
-                foreach (var number in CaseNumber.FromFileName(file, options.MinDigits, options.MaxDigits))
-                {
-                    if (!cases.TryGetValue(number, out var list))
-                        cases[number] = list = [];
-                    var dir = Path.GetDirectoryName(file)!;
-                    if (!list.Any(c => c.TagIndex == i && string.Equals(c.Folder, dir, PathComparison)))
-                        list.Add(new ExistingCase(i, dir));
-                }
-            }
-        }
+        var numbers = looseFiles.Select(f => CaseNumber.FromFileName(f, options.MinDigits, options.MaxDigits)).ToList();
 
-        return cases;
-    }
+        // Aynı numaralı birden çok klasör (ör. "34765" ve "34765-iflas") tek klasörde birleşir: etiketli ve kalabalık olan kalır.
+        var foldersByNumber = folders
+            .GroupBy(f => f.Name.Number)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.Name.HasLabels).ThenByDescending(f => f.Files.Count)
+                .ThenBy(f => f.Path, StringComparer.Ordinal).ToList());
 
-    public static GroupingPlan Plan(string root, IReadOnlyList<GroupingCandidate> candidates, IReadOnlyList<GroupingTag> tags,
-        GroupingOptions options, IReadOnlyDictionary<string, List<ExistingCase>>? existing = null)
-    {
-        existing ??= new Dictionary<string, List<ExistingCase>>();
-        var numbers = candidates.Select(c => CaseNumber.FromFileName(c.Path, options.MinDigits, options.MaxDigits)).ToList();
-
-        // Ortak numarası olan dosyaları birleştir (birleşim-bul).
-        var parent = Enumerable.Range(0, candidates.Count).ToArray();
+        // Ortak numarası olan gevşek dosyaları birleştir (birleşim-bul).
+        var parent = Enumerable.Range(0, looseFiles.Count).ToArray();
         int Find(int x) => parent[x] == x ? x : parent[x] = Find(parent[x]);
         var firstWithNumber = new Dictionary<string, int>();
-        for (var i = 0; i < candidates.Count; i++)
+        for (var i = 0; i < looseFiles.Count; i++)
         {
             foreach (var number in numbers[i])
             {
@@ -312,154 +384,153 @@ public static class GroupingPlanner
             }
         }
 
-        var moves = new List<PlannedMove>();
+        var incoming = new Dictionary<string, List<string>>();
         var unchanged = new List<UnchangedFile>();
-        foreach (var group in Enumerable.Range(0, candidates.Count).GroupBy(Find))
+        foreach (var component in Enumerable.Range(0, looseFiles.Count).GroupBy(Find))
         {
-            var members = group.ToList();
+            var members = component.ToList();
+            var counts = members.SelectMany(m => numbers[m]).GroupBy(n => n).ToList();
+            if (counts.Count == 0)
+            {
+                unchanged.AddRange(members.Select(m => new UnchangedFile(looseFiles[m], "Dosya adında dosya numarası yok")));
+                continue;
+            }
 
-            // Grubun numarası: en çok dosyada geçen.
-            var caseNumber = members.SelectMany(m => numbers[m])
-                .GroupBy(n => n)
-                .OrderByDescending(g => g.Count())
+            // Klasörü zaten olan numara önce gelir; yoksa en çok dosyada geçen numara.
+            var number = counts
+                .OrderByDescending(g => foldersByNumber.ContainsKey(g.Key))
+                .ThenByDescending(g => g.Count())
                 .ThenBy(g => g.Key, StringComparer.Ordinal)
-                .Select(g => g.Key)
-                .FirstOrDefault();
-            var groupNumbers = members.SelectMany(m => numbers[m]).Distinct().ToList();
-
-            // Numara daha önce bir etiket klasörüne yerleştirildiyse oraya; yoksa üyelerde bulunan en öncelikli etikete.
-            var existingCase = groupNumbers
-                .SelectMany(n => existing.TryGetValue(n, out var list) ? list : [])
-                .OrderBy(c => c.TagIndex)
-                .FirstOrDefault();
-            var groupHits = members
-                .SelectMany(m => candidates[m].Hits.Select(h => (Member: m, Hit: h)))
-                .Where(x => x.Hit.TagIndex >= 0 && x.Hit.TagIndex < tags.Count)
-                .ToList();
-            var chosenTag = existingCase?.TagIndex ?? (groupHits.Count > 0 ? groupHits.Min(x => x.Hit.TagIndex) : (int?)null);
-
-            string? destination;
-            if (existingCase is not null)
-                destination = existingCase.Folder;
-            else if (chosenTag is { } tag)
+                .First().Key;
+            if (members.Count == 1 && !foldersByNumber.ContainsKey(number) && !options.SingleFileFolders)
             {
-                destination = Path.Combine(root, tags[tag].FolderName);
-                if (caseNumber is not null && options.CaseSubfolders)
-                    destination = Path.Combine(destination, caseNumber);
+                unchanged.Add(new UnchangedFile(looseFiles[members[0]], $"{number} numaralı başka dosya yok"));
+                continue;
             }
-            else if (caseNumber is not null &&
-                     (members.Count > 1 || members.Any(m => IsInCaseFolder(root, candidates[m].Path, options))))
-                destination = Path.Combine(root, caseNumber);
-            else
-                destination = null;
 
-            foreach (var member in members)
-            {
-                var candidate = candidates[member];
-                var name = Path.GetFileName(candidate.Path);
-                if (destination is null)
-                {
-                    unchanged.Add(new UnchangedFile(candidate.Path, caseNumber is null
-                        ? "Etiket kelimesi geçmiyor, dosya numarası yok"
-                        : $"Etiket kelimesi geçmiyor; {caseNumber} numaralı başka dosya yok"));
-                    continue;
-                }
-
-                var reason = Reason(candidate, chosenTag, existingCase, groupHits, candidates, tags, caseNumber, members.Count);
-                if (string.Equals(Path.GetDirectoryName(candidate.Path), destination, PathComparison))
-                {
-                    unchanged.Add(new UnchangedFile(candidate.Path, "Zaten doğru klasörde · " + reason));
-                    continue;
-                }
-
-                moves.Add(new PlannedMove(candidate.Path, destination, reason));
-            }
+            incoming[number] = members.Select(m => looseFiles[m]).ToList();
         }
 
-        moves.Sort((a, b) =>
+        var groups = new List<CaseGroup>();
+        foreach (var number in incoming.Keys.Concat(foldersByNumber.Keys).Distinct().Order(StringComparer.Ordinal))
         {
-            var byFolder = StringComparer.CurrentCultureIgnoreCase.Compare(a.DestinationFolder, b.DestinationFolder);
-            return byFolder != 0 ? byFolder : StringComparer.CurrentCultureIgnoreCase.Compare(a.Source, b.Source);
-        });
+            var list = foldersByNumber.GetValueOrDefault(number) ?? [];
+            var files = incoming.GetValueOrDefault(number) ?? [];
+            var merged = list.Skip(1).ToList();
+            groups.Add(new CaseGroup(number, list.FirstOrDefault(), files.Concat(merged.SelectMany(f => f.Files)).ToList(), merged));
+        }
+
         unchanged.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.Path, b.Path));
-        return new GroupingPlan(root, moves, unchanged);
+        return new NumberGrouping(root, groups, unchanged);
     }
 
-    private static string Reason(GroupingCandidate candidate, int? chosenTag, ExistingCase? existingCase,
-        List<(int Member, TagHit Hit)> groupHits, IReadOnlyList<GroupingCandidate> candidates, IReadOnlyList<GroupingTag> tags,
-        string? caseNumber, int memberCount)
+    /// <summary>2. aşamanın sonucuyla son planı kurar. Değişmeyecek klasörler plana girmez.</summary>
+    /// <param name="hits">Grup numarası → o grubun dosyalarında bulunan etiketler.</param>
+    public static GroupingPlan BuildPlan(NumberGrouping grouping, IReadOnlyDictionary<string, List<TagEvidence>> hits,
+        IReadOnlyList<GroupingTag> tags)
     {
-        string reason;
-        var own = chosenTag is { } tag ? candidate.Hits.FirstOrDefault(h => h.TagIndex == tag) : null;
-        if (chosenTag is null)
-            reason = $"{caseNumber} numaralı {memberCount} dosya";
-        else if (own is not null && existingCase is null)
-            reason = $"\"{own.Keyword}\" geçiyor";
-        else if (existingCase is not null)
-            reason = $"{caseNumber} numaralı dosyalar zaten \"{tags[existingCase.TagIndex].Name}\" klasöründe" +
-                     (own is not null ? $" (\"{own.Keyword}\" de geçiyor)" : "");
-        else
+        var plans = new List<CaseFolderPlan>();
+        var taken = new HashSet<string>(PathComparer);
+        foreach (var group in grouping.Groups)
         {
-            var source = groupHits.First(x => x.Hit.TagIndex == chosenTag);
-            reason = $"Aynı numaralı \"{Path.GetFileName(candidates[source.Member].Path)}\" dosyasında \"{source.Hit.Keyword}\" geçiyor";
+            var name = group.Folder?.Name ?? new CaseFolderName(group.Number, "");
+            var found = (hits.GetValueOrDefault(group.Number) ?? [])
+                .Where(h => h.TagIndex >= 0 && h.TagIndex < tags.Count)
+                .GroupBy(h => h.TagIndex)
+                .OrderBy(g => g.Key)
+                .Select(g => g.First())
+                .Where(h => !name.HasLabel(tags[h.TagIndex].FolderName))
+                .ToList();
+            var final = name.WithLabels(found.Select(h => tags[h.TagIndex].FolderName));
+            var finalPath = Path.Combine(grouping.Root, final.ToString());
+            if (group.Folder is not null && found.Count == 0)
+                finalPath = group.Folder.Path;
+            if (!taken.Add(finalPath))
+                finalPath = group.Folder?.Path ?? finalPath; // aynı ada iki grup düşerse yeniden adlandırılmaz
+
+            var plan = new CaseFolderPlan(group, finalPath, found);
+            if (plan.IsNew || plan.Renames || group.IncomingFiles.Count > 0)
+                plans.Add(plan);
         }
 
-        var others = candidate.Hits.Where(h => h.TagIndex != chosenTag && h.TagIndex < tags.Count)
-            .Select(h => tags[h.TagIndex].Name).ToList();
-        if (others.Count > 0)
-            reason += $" · ayrıca uyuyor: {string.Join(", ", others)}";
-        return reason;
-    }
-
-    private static bool IsInCaseFolder(string root, string path, GroupingOptions options)
-    {
-        var dir = Path.GetDirectoryName(path);
-        return dir is not null && !string.Equals(Path.TrimEndingDirectorySeparator(dir), Path.TrimEndingDirectorySeparator(root), PathComparison) &&
-               CaseNumber.IsCaseFolderName(Path.GetFileName(dir), options.MinDigits, options.MaxDigits);
+        return new GroupingPlan(grouping.Root, plans, grouping.Unchanged);
     }
 
     /// <summary>
-    /// Planı uygular. Hedefte aynı adlı dosya varsa üzerine yazılmaz, "ad (2).pdf" olarak taşınır.
-    /// Boşalan numara klasörleri silinir.
+    /// Planı uygular: klasörleri oluşturur ya da etiketli adıyla yeniden adlandırır, dosyaları taşır.
+    /// Hedefte aynı adlı dosya varsa üzerine yazılmaz, "ad (2).pdf" olur. Her işlem ayrı denenir; biri başarısız olsa da diğerleri sürer.
     /// </summary>
-    public static GroupingResult Apply(GroupingPlan plan, CancellationToken token = default)
+    public static GroupingResult Apply(GroupingPlan plan, IProgress<string>? progress = null, CancellationToken token = default)
     {
         var moved = new List<(string, string)>();
+        var renamed = new List<(string, string)>();
         var failed = new List<string>();
-        var emptied = new HashSet<string>(PathComparer);
-        foreach (var move in plan.Moves)
+        foreach (var folder in plan.Folders)
         {
             if (token.IsCancellationRequested)
                 break;
+            var target = folder.FinalFolder;
             try
             {
-                Directory.CreateDirectory(move.DestinationFolder);
-                var destination = UniquePath(move.DestinationFolder, Path.GetFileName(move.Source));
-                File.Move(move.Source, destination);
-                moved.Add((move.Source, destination));
-                if (IsInCaseFolder(plan.Root, move.Source, new GroupingOptions(1, int.MaxValue)))
-                    emptied.Add(Path.GetDirectoryName(move.Source)!);
+                if (folder.Group.Folder is { } existing && folder.Renames)
+                {
+                    if (Directory.Exists(target))
+                    {
+                        failed.Add($"{Path.GetFileName(existing.Path)}: \"{Path.GetFileName(target)}\" adında klasör zaten var, yeniden adlandırılmadı.");
+                        target = existing.Path;
+                    }
+                    else
+                    {
+                        Directory.Move(existing.Path, target);
+                        renamed.Add((existing.Path, target));
+                    }
+                }
+                else
+                {
+                    Directory.CreateDirectory(target);
+                }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex)
             {
-                failed.Add($"{Path.GetFileName(move.Source)}: {ex.Message}");
+                Diagnostics.AppLog.Error("Gruplama", $"Klasör hazırlanamadı: {target}", ex);
+                failed.Add($"{Path.GetFileName(target)}: {Diagnostics.AppLog.Describe(ex)}");
+                continue;
+            }
+
+            foreach (var source in folder.Group.IncomingFiles)
+            {
+                if (token.IsCancellationRequested)
+                    break;
+                progress?.Report(Path.GetFileName(source));
+                try
+                {
+                    var destination = UniquePath(target, Path.GetFileName(source));
+                    File.Move(source, destination);
+                    moved.Add((source, destination));
+                }
+                catch (Exception ex)
+                {
+                    Diagnostics.AppLog.Error("Gruplama", $"Dosya taşınamadı: {source} → {target}", ex);
+                    failed.Add($"{Path.GetFileName(source)}: {Diagnostics.AppLog.Describe(ex)}");
+                }
+            }
+
+            // Birleştirilen eski klasörler boşaldıysa silinir.
+            foreach (var merged in folder.Group.MergedFolders)
+            {
+                try
+                {
+                    if (Directory.Exists(merged.Path) && !Directory.EnumerateFileSystemEntries(merged.Path).Any())
+                        Directory.Delete(merged.Path);
+                }
+                catch (Exception ex)
+                {
+                    Diagnostics.AppLog.Warning("Gruplama", $"Boş klasör silinemedi: {merged.Path}", ex);
+                }
             }
         }
 
-        foreach (var dir in emptied)
-        {
-            try
-            {
-                if (!Directory.EnumerateFileSystemEntries(dir).Any())
-                    Directory.Delete(dir);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Boş klasör kalırsa sorun değil.
-            }
-        }
-
-        return new GroupingResult(moved, failed);
+        return new GroupingResult(moved, renamed, failed);
     }
 
     private static string UniquePath(string folder, string fileName)
