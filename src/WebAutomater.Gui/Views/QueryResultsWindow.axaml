@@ -4,7 +4,7 @@
         x:Class="WebAutomater.Gui.Views.QueryResultsWindow"
         x:DataType="vm:QueryRunViewModel"
         Title="{Binding WindowTitle}"
-        Width="860" Height="560" MinWidth="480" MinHeight="300"
+        Width="900" Height="580" MinWidth="520" MinHeight="300"
         WindowStartupLocation="CenterOwner">
 
   <Window.Styles>
@@ -14,48 +14,71 @@
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style Selector="ListBox.results > ListBoxItem">
-      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Padding" Value="8,5" />
       <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="TextBlock.found">
+      <Setter Property="Foreground" Value="#2E7D32" />
+    </Style>
+    <Style Selector="TextBlock.failed">
+      <Setter Property="Foreground" Value="#C62828" />
     </Style>
   </Window.Styles>
 
   <DockPanel Margin="12">
-    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" />
-      <Button Grid.Column="1" Content="Durdur" Command="{Binding StopCommand}" IsVisible="{Binding IsRunning}" />
-    </Grid>
+    <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="0,0,0,8">
+      <Grid ColumnDefinitions="*,Auto,6,Auto">
+        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="Durdur" Command="{Binding StopCommand}" IsVisible="{Binding IsRunning}" />
+        <Button Name="CopyAllButton" Grid.Column="3" Content="Sonuçları kopyala"
+                ToolTip.Tip="Numara, tür, durum ve sonuç; Excel'e yapıştırınca her numara bir satır olur" />
+      </Grid>
+      <TextBlock Text="{Binding Counts}" FontWeight="SemiBold" />
+    </StackPanel>
 
-    <Grid ColumnDefinitions="230,8,*">
+    <Grid ColumnDefinitions="340,8,*">
       <ListBox Classes="results" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="vm:QueryResultRow">
-            <Grid ColumnDefinitions="Auto,6,*" RowDefinitions="Auto,Auto">
-              <Ellipse Grid.RowSpan="2" Width="9" Height="9" VerticalAlignment="Center" Fill="#90A4AE" IsVisible="{Binding IsPending}" />
-              <Ellipse Grid.RowSpan="2" Width="9" Height="9" VerticalAlignment="Center" Fill="#43A047" IsVisible="{Binding IsSuccess}" />
-              <Ellipse Grid.RowSpan="2" Width="9" Height="9" VerticalAlignment="Center" Fill="#E53935" IsVisible="{Binding IsFailure}" />
-              <TextBlock Grid.Column="2" Text="{Binding Id}" FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="14" />
-              <TextBlock Grid.Column="2" Grid.Row="1" Classes="hint" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis">
-                <Run Text="{Binding Kind}" /> · <Run Text="{Binding StatusLine}" />
-              </TextBlock>
+            <Grid ColumnDefinitions="Auto,8,*" RowDefinitions="Auto,Auto">
+              <Ellipse Grid.RowSpan="2" Width="10" Height="10" VerticalAlignment="Top" Margin="0,5,0,0" Fill="#90A4AE" IsVisible="{Binding IsPending}" />
+              <Ellipse Grid.RowSpan="2" Width="10" Height="10" VerticalAlignment="Top" Margin="0,5,0,0" Fill="#43A047" IsVisible="{Binding IsFound}" />
+              <Ellipse Grid.RowSpan="2" Width="10" Height="10" VerticalAlignment="Top" Margin="0,5,0,0" Fill="#B0BEC5" IsVisible="{Binding IsEmpty}" />
+              <Ellipse Grid.RowSpan="2" Width="10" Height="10" VerticalAlignment="Top" Margin="0,5,0,0" Fill="#E53935" IsVisible="{Binding IsFailure}" />
+              <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="{Binding Id}" FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="14" />
+                <TextBlock Text="{Binding Kind}" Classes="hint" FontSize="11" VerticalAlignment="Center" />
+              </StackPanel>
+              <TextBlock Grid.Column="2" Grid.Row="1" Text="{Binding StatusLine}" FontSize="12" TextWrapping="Wrap" MaxHeight="34"
+                         TextTrimming="CharacterEllipsis" Opacity="0.85"
+                         Classes.found="{Binding IsFound}" Classes.failed="{Binding IsFailure}" />
             </Grid>
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
 
       <DockPanel Grid.Column="2" DataContext="{Binding SelectedResult}" x:DataType="vm:QueryResultRow">
-        <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,6">
+        <StackPanel DockPanel.Dock="Top" Spacing="3" Margin="0,0,0,6">
           <Grid ColumnDefinitions="*,Auto,6,Auto">
-            <SelectableTextBlock Text="{Binding Id}" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" />
-            <CheckBox Grid.Column="1" Content="Satırları kaydır"
-                      IsChecked="{Binding $parent[Window].((vm:QueryRunViewModel)DataContext).WrapLines}" />
-            <Button Name="CopyButton" Grid.Column="3" Content="Yanıtı kopyala" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <SelectableTextBlock Text="{Binding Id}" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding OutcomeText}" FontWeight="SemiBold" VerticalAlignment="Center"
+                         Classes.found="{Binding IsFound}" Classes.failed="{Binding IsFailure}" />
+            </StackPanel>
+            <CheckBox Grid.Column="1" Content="Ham yanıtı göster" ToolTip.Tip="Sunucunun döndürdüğü yanıtın tamamı (kontrol için)"
+                      IsChecked="{Binding $parent[Window].((vm:QueryRunViewModel)DataContext).ShowRaw}" />
+            <Button Name="CopyButton" Grid.Column="3" Content="Kopyala" />
           </Grid>
-          <SelectableTextBlock Text="{Binding Details}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
-          <SelectableTextBlock Text="{Binding Url}" FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="{Binding Details}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
         </StackPanel>
-        <TextBox Name="BodyBox" Text="{Binding Body, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True"
-                 FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="12"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
+        <Panel>
+          <TextBox Name="ResultBox" Text="{Binding ResultText, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                   FontSize="14" IsVisible="{Binding !$parent[Window].((vm:QueryRunViewModel)DataContext).ShowRaw}" />
+          <TextBox Name="BodyBox" Text="{Binding RawBody, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True"
+                   FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="12"
+                   IsVisible="{Binding $parent[Window].((vm:QueryRunViewModel)DataContext).ShowRaw}"
+                   ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
+        </Panel>
       </DockPanel>
     </Grid>
   </DockPanel>

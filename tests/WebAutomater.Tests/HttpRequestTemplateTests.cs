@@ -187,3 +187,65 @@ public class QuerySenderTests
         Assert.NotNull(result.Error);
     }
 }
+
+public class QueryResultReaderTests
+{
+    private static QueryResult Ok(string body, int status = 200, string text = "OK") =>
+        new("1", "https://x", status, text, TimeSpan.Zero, "application/json", body, null);
+
+    private static QuerySummary Read(QueryResult r) => QueryResultReader.Summarize(r, "value", "Müşteri kaydı yok");
+
+    [Theory]
+    [InlineData("""{"@odata.context":"x","value":[]}""")]
+    [InlineData("""{"value":null}""")]
+    [InlineData("""{"value":""}""")]
+    [InlineData("""{"value":[{"@odata.etag":"1","Ad":null}]}""")]
+    public void Empty_value_means_no_customer(string body)
+    {
+        var s = Read(Ok(body));
+        Assert.Equal(QueryOutcome.Empty, s.Outcome);
+        Assert.Equal("Müşteri kaydı yok", s.Text);
+    }
+
+    [Fact]
+    public void Filled_value_shows_only_its_fields()
+    {
+        var s = Read(Ok("""{"@odata.context":"x","value":[{"@odata.etag":"e","MusteriNo":12345,"Ad":"Şule","Aktif":true,"Adres":{"Il":"İzmir"},"Not":null}]}"""));
+        Assert.Equal(QueryOutcome.Found, s.Outcome);
+        Assert.Equal("MusteriNo: 12345 · Ad: Şule · Aktif: Evet · Adres.Il: İzmir", s.Text);
+    }
+
+    [Fact]
+    public void Multiple_records_are_numbered_lines_and_scalars_join()
+    {
+        var s = Read(Ok("""{"value":[{"No":1},{"No":2}]}"""));
+        Assert.Equal($"1) No: 1{Environment.NewLine}2) No: 2", s.Text);
+        Assert.Equal("A, B", Read(Ok("""{"value":["A","B"]}""")).Text);
+        Assert.Equal("Var", Read(Ok("""{"sonuc":{"Value":"Var"}}""")).Text);
+    }
+
+    [Fact]
+    public void Failures_show_status_and_server_message()
+    {
+        var odata = Read(Ok("""{"error":{"code":"401","message":"Oturum geçersiz"}}""", 401, "Unauthorized"));
+        Assert.Equal(QueryOutcome.Failed, odata.Outcome);
+        Assert.Equal("HTTP 401 Unauthorized: Oturum geçersiz", odata.Text);
+
+        var html = Read(Ok("<html><head><style>x{}</style></head><body><h1>Sunucu hatası</h1></body></html>", 500, "Internal Server Error"));
+        Assert.Equal("HTTP 500 Internal Server Error: Sunucu hatası", html.Text);
+
+        var network = Read(new QueryResult("1", "u", null, "Hata", TimeSpan.Zero, null, "", "Bağlantı reddedildi"));
+        Assert.Equal(("Bağlantı reddedildi", QueryOutcome.Failed), (network.Text, network.Outcome));
+    }
+
+    [Fact]
+    public void Login_page_with_200_or_missing_field_is_failure_not_empty()
+    {
+        var login = Read(Ok("<html><body><form>Giriş yapın</form></body></html>"));
+        Assert.Equal(QueryOutcome.Failed, login.Outcome);
+        Assert.Contains("oturum", login.Text);
+        Assert.Contains("Giriş yapın", login.Text);
+
+        Assert.Equal(QueryOutcome.Failed, Read(Ok("""{"items":[]}""")).Outcome);
+    }
+}

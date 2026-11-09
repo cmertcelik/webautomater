@@ -173,8 +173,10 @@ public sealed partial class DocumentsViewModel : ObservableObject
         foreach (var tag in settings.Tags ?? [])
             AttachTag(new GroupTagViewModel(tag));
         ValidateTags();
-        CustomerQuery = new QueryConfigViewModel("Müşteri sorgulama", settings.CustomerQuery);
-        IntelQuery = new QueryConfigViewModel("İstihbarat sorgulama", settings.IntelQuery);
+        CustomerQuery = new QueryConfigViewModel("Müşteri sorgulama", settings.CustomerQuery,
+            settings.CustomerQueryField ?? "value", "Müşteri kaydı yok");
+        IntelQuery = new QueryConfigViewModel("İstihbarat sorgulama", settings.IntelQuery,
+            settings.IntelResultField ?? "value", "İstihbarat kaydı yok");
         foreach (var query in Queries)
         {
             query.Changed += SaveSettings;
@@ -1267,7 +1269,8 @@ public sealed partial class DocumentsViewModel : ObservableObject
         var targets = QueryTargets();
         if (targets.Count == 0)
             return;
-        var run = new QueryRunViewModel(query.Title, template, targets.Select(r => (r.Value, r.KindText)));
+        var run = new QueryRunViewModel(query.Title, template, targets.Select(r => (r.Value, r.KindText)),
+            query.ResultField, query.EmptyText);
         ShowQueryResults(run);
         _ = run.RunAsync();
     }
@@ -1506,7 +1509,11 @@ public sealed partial class DocumentsViewModel : ObservableObject
         int CaseMaxDigits = 7,
         bool SingleFileFolders = false,
         string? CustomerQuery = null,
-        string? IntelQuery = null);
+        string? IntelQuery = null,
+        string? CustomerQueryField = null,
+        // Önceki sürümde istihbarat için alan boş (yanıtın tamamı) kaydediliyordu; yeni varsayılan "value"
+        // eski kayıtla ezilmesin diye ayar yeni adla tutulur.
+        string? IntelResultField = null);
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WebAutomater", "belge-tarama.json");
@@ -1540,7 +1547,8 @@ public sealed partial class DocumentsViewModel : ObservableObject
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             var settings = new Settings(RootFolder, ExcelPath, Fields.Select(f => f.ToDefinition()).ToList(),
                 Tags.Select(t => t.ToDefinition()).ToList(), CaseMinDigits, CaseMaxDigits, SingleFileFolders,
-                NullIfEmpty(CustomerQuery?.RequestText), NullIfEmpty(IntelQuery?.RequestText));
+                NullIfEmpty(CustomerQuery?.RequestText), NullIfEmpty(IntelQuery?.RequestText),
+                CustomerQuery?.ResultField ?? "value", IntelQuery?.ResultField ?? "value");
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)

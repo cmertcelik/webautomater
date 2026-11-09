@@ -9,14 +9,29 @@ namespace WebAutomater.Gui.ViewModels;
 /// <summary>Bir sorgu butonunun ayarı: Chrome'dan kopyalanan istek ve ayrıştırma sonucu.</summary>
 public sealed partial class QueryConfigViewModel : ObservableObject
 {
-    public QueryConfigViewModel(string title, string? text)
+    /// <param name="resultField">Yanıtta gösterilecek alan ("value"); boşsa yanıtın tamamı.</param>
+    /// <param name="emptyText">Alan boş gelince yazılacak metin.</param>
+    public QueryConfigViewModel(string title, string? text, string? resultField, string emptyText)
     {
         Title = title;
+        EmptyText = emptyText;
         _requestText = text ?? "";
+        _resultField = resultField ?? "";
         Reparse();
     }
 
     public string Title { get; }
+
+    public string EmptyText { get; }
+
+    /// <summary>Yanıtta gösterilecek alan; "value" ya da "data.items" gibi noktalı yol. Boşsa yanıtın tamamı görünür.</summary>
+    [ObservableProperty]
+    private string _resultField;
+
+    partial void OnResultFieldChanged(string value) => Changed?.Invoke();
+
+    public string ResultFieldHint =>
+        $"Yalnızca bu alan gösterilir. Boş gelirse \"{EmptyText}\" yazar, doluysa içindeki değerler yazar. Alanı boş bırakırsanız yanıtın tamamı görünür.";
 
     /// <summary>İstek metni değişti: ayarlar kaydedilmeli.</summary>
     public event Action? Changed;
@@ -99,31 +114,51 @@ public sealed partial class QueryConfigViewModel : ObservableObject
 }
 
 /// <summary>Bir numaranın sorgu sonucu satırı.</summary>
-public sealed partial class QueryResultRow(string id, string kind) : ObservableObject
+public sealed partial class QueryResultRow(string id, string kind, string? field, string emptyText) : ObservableObject
 {
     public string Id { get; } = id;
 
     public string Kind { get; } = kind;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsPending), nameof(IsSuccess), nameof(IsFailure), nameof(StatusLine), nameof(Body), nameof(Url), nameof(Details))]
+    [NotifyPropertyChangedFor(nameof(Summary), nameof(IsPending), nameof(IsFound), nameof(IsEmpty), nameof(IsFailure),
+        nameof(StatusLine), nameof(ResultText), nameof(RawBody), nameof(Url), nameof(Details), nameof(OutcomeText))]
     private QueryResult? _result;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(StatusLine))]
+    [NotifyPropertyChangedFor(nameof(StatusLine), nameof(ResultText))]
     private bool _isRunning;
+
+    public QuerySummary? Summary => Result is null ? null : QueryResultReader.Summarize(Result, field, emptyText);
 
     public bool IsPending => Result is null;
 
-    public bool IsSuccess => Result?.IsSuccess == true;
+    public bool IsFound => Summary?.Outcome == QueryOutcome.Found;
 
-    public bool IsFailure => Result is { IsSuccess: false };
+    public bool IsEmpty => Summary?.Outcome == QueryOutcome.Empty;
 
-    public string StatusLine => Result switch
+    public bool IsFailure => Summary?.Outcome == QueryOutcome.Failed;
+
+    public string OutcomeText => Summary?.Outcome switch
     {
-        null => IsRunning ? "Sorgulanıyor..." : "Bekliyor",
-        { Error: not null } => "Hata",
-        { } r => $"{r.StatusCode} {r.StatusText} · {r.Elapsed.TotalMilliseconds:0} ms",
+        QueryOutcome.Found => "Kayıt var",
+        QueryOutcome.Empty => "Kayıt yok",
+        QueryOutcome.Failed => "Kontrol edin",
+        _ => "",
+    };
+
+    /// <summary>Listede numaranın altındaki satır: sonuç ya da hata mesajı.</summary>
+    public string StatusLine => Summary?.Line ?? (IsRunning ? "Sorgulanıyor..." : "Bekliyor");
+
+    /// <summary>Sağ paneldeki sonuç: alanın değerleri, "kayıt yok" ya da hata mesajı.</summary>
+    public string ResultText => Summary?.Text ?? (IsRunning ? "Sorgulanıyor..." : "Bekliyor");
+
+    public string RawBody => Result switch
+    {
+        null => "",
+        { Error: { } error } => error,
+        { Body.Length: 0 } => "(yanıt boş)",
+        { } r => r.Body,
     };
 
     public string Url => Result?.Url ?? "";
@@ -131,17 +166,8 @@ public sealed partial class QueryResultRow(string id, string kind) : ObservableO
     public string Details => Result switch
     {
         null => "",
-        { Error: { } error } => error,
-        { } r => $"{r.StatusCode} {r.StatusText} · {r.Elapsed.TotalMilliseconds:0} ms" +
-                 (r.ContentType is null ? "" : $" · {r.ContentType}") + $" · {r.Body.Length:N0} karakter",
-    };
-
-    public string Body => Result switch
-    {
-        null => "",
-        { Error: { } error } => error,
-        { Body.Length: 0 } => "(yanıt boş)",
-        { } r => r.Body,
+        { Error: not null } => $"{Result.Elapsed.TotalMilliseconds:0} ms",
+        { } r => $"HTTP {r.StatusCode} {r.StatusText} · {r.Elapsed.TotalMilliseconds:0} ms",
     };
 }
 
@@ -151,12 +177,13 @@ public sealed partial class QueryRunViewModel : ObservableObject
     private readonly HttpRequestTemplate _template;
     private readonly CancellationTokenSource _cts = new();
 
-    public QueryRunViewModel(string title, HttpRequestTemplate template, IEnumerable<(string Id, string Kind)> ids)
+    public QueryRunViewModel(string title, HttpRequestTemplate template, IEnumerable<(string Id, string Kind)> ids,
+        string? resultField = null, string emptyText = "Kayıt yok")
     {
         Title = title;
         _template = template;
         foreach (var (id, kind) in ids)
-            Results.Add(new QueryResultRow(id, kind));
+            Results.Add(new QueryResultRow(id, kind, resultField, emptyText));
         _selectedResult = Results.FirstOrDefault();
         _status = $"{Results.Count} numara sorgulanacak.";
     }
@@ -174,11 +201,30 @@ public sealed partial class QueryRunViewModel : ObservableObject
     private string _status;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Counts))]
+    private int _completed;
+
+    [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     private bool _isRunning;
 
+    /// <summary>Ham yanıt yerine yalnızca sonuç gösterilir; kontrol için ham yanıt açılabilir.</summary>
+    [ObservableProperty]
+    private bool _showRaw;
+
     [ObservableProperty]
     private bool _wrapLines = true;
+
+    public string Counts
+    {
+        get
+        {
+            var found = Results.Count(r => r.IsFound);
+            var empty = Results.Count(r => r.IsEmpty);
+            var failed = Results.Count(r => r.IsFailure);
+            return $"Kayıt var: {found}   ·   Kayıt yok: {empty}   ·   Kontrol edilecek: {failed}";
+        }
+    }
 
     public async Task RunAsync()
     {
@@ -198,15 +244,16 @@ public sealed partial class QueryRunViewModel : ObservableObject
                 row.IsRunning = true;
                 row.Result = await QuerySender.SendAsync(client, _template, row.Id, token);
                 row.IsRunning = false;
-                if (row.Result is { IsSuccess: false } failed)
-                    AppLog.Warning("Sorgulama", $"{Title}: {done + 1}. numara başarısız: {failed.Error ?? $"HTTP {failed.StatusCode} {failed.StatusText}"}");
+                if (row.IsFailure)
+                    AppLog.Warning("Sorgulama", $"{Title}: {done + 1}. numara kontrol edilmeli: {row.Summary?.Line}");
                 done++;
+                Completed = done;
             }
 
-            var ok = Results.Count(r => r.IsSuccess);
-            Status = ok == Results.Count
+            var failed = Results.Count(r => r.IsFailure);
+            Status = failed == 0
                 ? $"{Results.Count} numara sorgulandı."
-                : $"{Results.Count} numaradan {ok} tanesi başarılı, {Results.Count - ok} tanesi hatalı. Oturum süresi dolduysa isteği Chrome'dan yeniden kopyalayın.";
+                : $"{Results.Count} numara sorgulandı; {failed} tanesi elle kontrol edilmeli. Oturum süresi dolduysa isteği Chrome'dan yeniden kopyalayın.";
         }
         catch (OperationCanceledException)
         {
@@ -224,8 +271,14 @@ public sealed partial class QueryRunViewModel : ObservableObject
         finally
         {
             IsRunning = false;
+            OnPropertyChanged(nameof(Counts));
         }
     }
+
+    /// <summary>Excel'e yapıştırmak için: numara, tür, durum ve sonuç sekmeyle ayrılmış, her numara bir satır.</summary>
+    public string ResultsAsTable() =>
+        string.Join(Environment.NewLine, Results.Select(r =>
+            string.Join('\t', r.Id, r.Kind, r.OutcomeText, (r.Summary?.Text ?? r.StatusLine).ReplaceLineEndings(" | "))));
 
     [RelayCommand(CanExecute = nameof(IsRunning))]
     private void Stop() => _cts.Cancel();

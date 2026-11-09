@@ -120,6 +120,11 @@
                 <TextBlock Text="{Binding Summary}" Classes="hint" Foreground="#43A047" Opacity="1" IsVisible="{Binding HasSummary}" />
                 <TextBlock Text="{Binding Error}" Classes="hint" Foreground="#E53935" Opacity="1" IsVisible="{Binding HasError}" />
                 <TextBlock Text="{Binding Warnings}" Classes="hint" Foreground="#EF6C00" Opacity="1" IsVisible="{Binding HasWarnings}" />
+                <Grid ColumnDefinitions="Auto,8,*" Margin="0,6,0,0">
+                  <TextBlock Text="Sonuç alanı" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12" />
+                  <TextBox Grid.Column="2" Text="{Binding ResultField}" Watermark="ör. value (boş: yanıtın tamamı)" />
+                </Grid>
+                <TextBlock Text="{Binding ResultFieldHint}" Classes="hint" />
                 <TextBlock Classes="hint"
                            Text="İstek çerez ve oturum bilgisi içerebilir; bu bilgisayardaki ayar dosyasında saklanır. Oturum süresi dolunca istek hata verir: Chrome'dan yeniden kopyalayın." />
               </StackPanel>

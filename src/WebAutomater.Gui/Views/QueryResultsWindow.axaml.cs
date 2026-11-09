@@ -12,8 +12,16 @@ public partial class QueryResultsWindow : Window
         InitializeComponent();
         CopyButton.Click += async (_, _) =>
         {
-            if (ViewModel?.SelectedResult is { Body.Length: > 0 } row && Clipboard is { } clipboard)
-                await clipboard.SetTextAsync(row.Body);
+            if (ViewModel?.SelectedResult is not { } row || Clipboard is not { } clipboard)
+                return;
+            var text = ViewModel.ShowRaw ? row.RawBody : row.ResultText;
+            if (text.Length > 0)
+                await clipboard.SetTextAsync(text);
+        };
+        CopyAllButton.Click += async (_, _) =>
+        {
+            if (ViewModel is { } vm && Clipboard is { } clipboard)
+                await clipboard.SetTextAsync(vm.ResultsAsTable());
         };
         Closed += (_, _) => ViewModel?.Cancel();
         DataContextChanged += (_, _) =>
