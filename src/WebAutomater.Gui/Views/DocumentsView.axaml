@@ -6,6 +6,10 @@
              x:DataType="vm:DocumentsViewModel">
 
   <UserControl.Styles>
+    <!-- Fluent temasında açılır pencereler en fazla 456 px genişlikte; daha geniş içerik sağdan kesilir. -->
+    <Style Selector="FlyoutPresenter.wide">
+      <Setter Property="MaxWidth" Value="720" />
+    </Style>
     <Style Selector="TextBlock.title">
       <Setter Property="FontSize" Value="14" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -106,7 +110,7 @@
                 CommandParameter="{Binding}" ToolTip.Tip="{Binding ButtonTip}" ToolTip.ShowOnDisabled="True" />
         <Button Grid.Column="2" Classes="icon" Content="⚙" ToolTip.Tip="İsteği ayarla">
           <Button.Flyout>
-            <Flyout Placement="LeftEdgeAlignedBottom">
+            <Flyout Placement="LeftEdgeAlignedBottom" FlyoutPresenterClasses="wide">
               <StackPanel Width="560" Spacing="6">
                 <Grid ColumnDefinitions="*,Auto">
                   <TextBlock Text="{Binding SettingsTitle}" Classes="title" VerticalAlignment="Center" />

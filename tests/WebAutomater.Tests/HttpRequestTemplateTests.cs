@@ -122,14 +122,14 @@ public class HttpRequestTemplateTests
     }
 
     [Fact]
-    public void Build_substitutes_id_everywhere_and_puts_content_headers_on_body()
+    public async Task Build_substitutes_id_everywhere_and_puts_content_headers_on_body()
     {
         var t = HttpRequestTemplate.Parse("curl https://ornek.com/a/{ID} -H 'X-No: {id}' -H 'Content-Type: application/json' -d '{\"tc\":\"{id}\"}'");
         using var request = t.Build("10000000146");
         Assert.Equal("https://ornek.com/a/10000000146", request.RequestUri!.ToString());
         Assert.Equal("10000000146", request.Headers.GetValues("X-No").Single());
         Assert.Equal("application/json", request.Content!.Headers.ContentType!.MediaType);
-        Assert.Equal("{\"tc\":\"10000000146\"}", request.Content.ReadAsStringAsync().Result);
+        Assert.Equal("{\"tc\":\"10000000146\"}", await request.Content.ReadAsStringAsync());
     }
 }
 
