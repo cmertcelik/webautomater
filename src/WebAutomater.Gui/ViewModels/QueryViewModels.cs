@@ -175,13 +175,15 @@ public sealed partial class QueryResultRow(string id, string kind, string? field
 public sealed partial class QueryRunViewModel : ObservableObject
 {
     private readonly HttpRequestTemplate _template;
+    private readonly SessionConfigViewModel? _session;
     private readonly CancellationTokenSource _cts = new();
 
     public QueryRunViewModel(string title, HttpRequestTemplate template, IEnumerable<(string Id, string Kind)> ids,
-        string? resultField = null, string emptyText = "Kayıt yok")
+        string? resultField = null, string emptyText = "Kayıt yok", SessionConfigViewModel? session = null)
     {
         Title = title;
         _template = template;
+        _session = session;
         foreach (var (id, kind) in ids)
             Results.Add(new QueryResultRow(id, kind, resultField, emptyText));
         _selectedResult = Results.FirstOrDefault();
@@ -237,12 +239,34 @@ public sealed partial class QueryRunViewModel : ObservableObject
         try
         {
             using var client = QuerySender.CreateClient(_template.AllowInsecure);
+            var manager = _session?.Manager;
+            if (manager is not null && manager.Current is null)
+                Status = "Oturum açılıyor...";
             foreach (var row in Results)
             {
                 token.ThrowIfCancellationRequested();
                 Status = $"Sorgulanıyor... {done + 1}/{Results.Count}: {row.Id}";
                 row.IsRunning = true;
-                row.Result = await QuerySender.SendAsync(client, _template, row.Id, token);
+                if (manager is null)
+                {
+                    row.Result = await QuerySender.SendAsync(client, _template, row.Id, token);
+                }
+                else
+                {
+                    // Oturum yoksa açılır; sorgu oturum hatası verirse token yenilenip bir kez daha denenir.
+                    var (result, failure) = await manager.SendAsync(client, _template, row.Id, token);
+                    row.Result = result;
+                    if (failure is not null)
+                    {
+                        row.IsRunning = false;
+                        done++;
+                        Completed = done;
+                        _session!.ReportFailure(failure.Message);
+                        Status = $"Oturum açılamadı, sorgulama durdu ({done}/{Results.Count}): {failure.Message}";
+                        return;
+                    }
+                }
+
                 row.IsRunning = false;
                 if (row.IsFailure)
                     AppLog.Warning("Sorgulama", $"{Title}: {done + 1}. numara kontrol edilmeli: {row.Summary?.Line}");
@@ -284,4 +308,185 @@ public sealed partial class QueryRunViewModel : ObservableObject
     private void Stop() => _cts.Cancel();
 
     public void Cancel() => _cts.Cancel();
+}
+
+/// <summary>
+/// Oturum yenileme ayarı: platforma girişte giden token isteği ve oturum başlatma isteği.
+/// Geçerliyse müşteri/istihbarat sorguları token'ı buradan alır; süresi dolunca kendiliğinden yenilenir.
+/// </summary>
+public sealed partial class SessionConfigViewModel : ObservableObject, IDisposable
+{
+    private SessionManager? _manager;
+
+    public SessionConfigViewModel(string? tokenRequest, string? sessionRequest, string? tokenField, bool autoRefresh)
+    {
+        _tokenRequestText = tokenRequest ?? "";
+        _sessionRequestText = sessionRequest ?? "";
+        _tokenField = tokenField ?? "";
+        _autoRefresh = autoRefresh;
+        Rebuild();
+    }
+
+    /// <summary>Ayar değişti: kaydedilmeli.</summary>
+    public event Action? Changed;
+
+    [ObservableProperty] private string _tokenRequestText;
+    [ObservableProperty] private string _sessionRequestText;
+    [ObservableProperty] private string _tokenField;
+    [ObservableProperty] private bool _autoRefresh;
+
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasTokenRequestInfo))] private string _tokenRequestInfo = "";
+    [ObservableProperty] private bool _tokenRequestOk;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSessionRequestInfo))] private string _sessionRequestInfo = "";
+    [ObservableProperty] private bool _sessionRequestOk;
+
+    /// <summary>Panelde görünen kısa durum: "Oturum açık · 12 dk", "Oturum yenileme kapalı" vb.</summary>
+    [ObservableProperty] private string _status = "";
+    [ObservableProperty] private bool _statusIsError;
+
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasTestResult))] private string _testResult = "";
+    [ObservableProperty] private bool _testResultIsError;
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(TestCommand))] private bool _isTesting;
+
+    public bool HasTokenRequestInfo => TokenRequestInfo.Length > 0;
+
+    public bool HasSessionRequestInfo => SessionRequestInfo.Length > 0;
+
+    public bool HasTestResult => TestResult.Length > 0;
+
+    /// <summary>Sorgularda kullanılacak oturum; ayar eksik ya da kapalıysa null (kopyadaki token kullanılır).</summary>
+    public SessionManager? Manager => AutoRefresh ? _manager : null;
+
+    partial void OnTokenRequestTextChanged(string value) => OnEdited();
+    partial void OnSessionRequestTextChanged(string value) => OnEdited();
+    partial void OnTokenFieldChanged(string value) => OnEdited();
+
+    partial void OnAutoRefreshChanged(bool value)
+    {
+        UpdateStatus();
+        Changed?.Invoke();
+    }
+
+    private void OnEdited()
+    {
+        Rebuild();
+        Changed?.Invoke();
+    }
+
+    private static (HttpRequestTemplate? Template, string Info, bool Ok) Parse(string text, bool optional)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return (null, optional ? "" : "Token isteğini yapıştırın.", false);
+        try
+        {
+            var t = HttpRequestTemplate.Parse(text);
+            // Giriş isteklerinde {id} olmaz; o uyarı burada anlamsız.
+            var warnings = t.Warnings.Where(w => !w.Contains("{id}")).ToList();
+            return (t, $"✓ {t.Method} {t.Url}" + (warnings.Count > 0 ? Environment.NewLine + string.Join(Environment.NewLine, warnings.Select(w => "• " + w)) : ""), true);
+        }
+        catch (RequestParseException ex)
+        {
+            return (null, ex.Message, false);
+        }
+    }
+
+    private void Rebuild()
+    {
+        var (token, tokenInfo, tokenOk) = Parse(TokenRequestText, optional: false);
+        var (session, sessionInfo, sessionOk) = Parse(SessionRequestText, optional: true);
+        TokenRequestInfo = string.IsNullOrWhiteSpace(TokenRequestText) ? "" : tokenInfo;
+        TokenRequestOk = tokenOk;
+        SessionRequestInfo = sessionInfo;
+        SessionRequestOk = sessionOk;
+
+        if (_manager is not null)
+            _manager.Changed -= OnManagerChanged;
+        _manager?.Dispose();
+        _manager = token is not null && (session is not null || string.IsNullOrWhiteSpace(SessionRequestText))
+            ? new SessionManager(token, session, string.IsNullOrWhiteSpace(TokenField) ? null : TokenField)
+            : null;
+        if (_manager is not null)
+            _manager.Changed += OnManagerChanged;
+        OnPropertyChanged(nameof(Manager));
+        UpdateStatus();
+    }
+
+    private void OnManagerChanged(LoginResult result) =>
+        Avalonia.Threading.Dispatcher.UIThread.Post(UpdateStatus);
+
+    private void UpdateStatus()
+    {
+        if (_manager is null)
+        {
+            Status = string.IsNullOrWhiteSpace(TokenRequestText)
+                ? "Oturum yenileme ayarlanmadı: kopyalanan istekteki token kullanılır."
+                : "Oturum ayarında hata var; ⚙ ile kontrol edin.";
+            StatusIsError = !string.IsNullOrWhiteSpace(TokenRequestText);
+            return;
+        }
+
+        if (!AutoRefresh)
+        {
+            Status = "Oturum yenileme kapalı: kopyalanan istekteki token kullanılır.";
+            StatusIsError = false;
+            return;
+        }
+
+        if (_manager.Current is { } current)
+        {
+            var left = current.ExpiresAt is { } e ? $" · {Math.Max(0, (e - DateTimeOffset.UtcNow).TotalMinutes):0} dk geçerli" : "";
+            Status = $"Oturum açık ({DateTime.Now:HH:mm}){left}. Süresi dolunca kendiliğinden yenilenir.";
+            StatusIsError = false;
+        }
+        else
+        {
+            Status = "Oturum yenileme hazır: ilk sorguda oturum açılır.";
+            StatusIsError = false;
+        }
+    }
+
+    /// <summary>Sorgu sırasında oturum açılamadığında panelde gösterilir.</summary>
+    public void ReportFailure(string message)
+    {
+        Status = "Oturum açılamadı: " + message;
+        StatusIsError = true;
+    }
+
+    private bool CanTest() => !IsTesting;
+
+    [RelayCommand(CanExecute = nameof(CanTest))]
+    private async Task TestAsync()
+    {
+        if (_manager is null)
+        {
+            TestResult = TokenRequestOk ? SessionRequestInfo : TokenRequestInfo.Length > 0 ? TokenRequestInfo : "Önce token isteğini yapıştırın.";
+            TestResultIsError = true;
+            return;
+        }
+
+        IsTesting = true;
+        TestResult = "Deneniyor...";
+        TestResultIsError = false;
+        try
+        {
+            var result = await _manager.ForceRefreshAsync();
+            TestResult = result.Success
+                ? $"✓ {result.Message} Token: {TokenFinder.Mask(result.Token!)}"
+                : result.Message;
+            TestResultIsError = !result.Success;
+            UpdateStatus();
+        }
+        catch (Exception ex)
+        {
+            TestResult = AppLog.Describe(ex);
+            TestResultIsError = true;
+            AppLog.Warning("Oturum", "Oturum denemesi hata verdi.", ex);
+        }
+        finally
+        {
+            IsTesting = false;
+        }
+    }
+
+    public void Dispose() => _manager?.Dispose();
 }

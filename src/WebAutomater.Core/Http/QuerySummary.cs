@@ -80,7 +80,7 @@ public static partial class QueryResultReader
     }
 
     /// <summary>"value" ya da "data.items": önce verilen yol, bulunamazsa yanıtın herhangi bir yerindeki aynı adlı ilk alan.</summary>
-    private static JsonElement? Find(JsonElement root, string path)
+    internal static JsonElement? Find(JsonElement root, string path)
     {
         var current = root;
         var ok = true;
@@ -112,7 +112,7 @@ public static partial class QueryResultReader
         return null;
     }
 
-    private static JsonElement? Search(JsonElement element, string name)
+    internal static JsonElement? Search(JsonElement element, string name)
     {
         // Genişlik öncelikli: üstteki alan, içteki aynı adlı alandan önce gelir.
         var queue = new Queue<JsonElement>([element]);
@@ -201,7 +201,7 @@ public static partial class QueryResultReader
     };
 
     /// <summary>Hata yanıtındaki açıklama: JSON'da message/error/detail/title, değilse sayfanın kısa metni.</summary>
-    private static string? ServerMessage(string body)
+    internal static string? ServerMessage(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
             return null;

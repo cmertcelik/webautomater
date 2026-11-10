@@ -7,6 +7,13 @@
 
   <UserControl.Styles>
     <!-- Fluent temasında açılır pencereler en fazla 456 px genişlikte; daha geniş içerik sağdan kesilir. -->
+    <Style Selector="TextBlock.ok">
+      <Setter Property="Foreground" Value="#43A047" />
+    </Style>
+    <Style Selector="TextBlock.bad, TextBlock.session-error">
+      <Setter Property="Foreground" Value="#E53935" />
+      <Setter Property="Opacity" Value="1" />
+    </Style>
     <Style Selector="FlyoutPresenter.wide">
       <Setter Property="MaxWidth" Value="720" />
     </Style>
@@ -325,6 +332,44 @@
         <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,8,0,0">
           <ContentControl Content="{Binding CustomerQuery}" />
           <ContentControl Content="{Binding IntelQuery}" />
+          <Grid ColumnDefinitions="*,4,Auto" DataContext="{Binding Session}">
+            <TextBlock Text="{Binding Status}" Classes="hint" FontSize="11" VerticalAlignment="Center" TextWrapping="Wrap"
+                       Classes.session-error="{Binding StatusIsError}" ToolTip.Tip="{Binding Status}" MaxHeight="44" TextTrimming="CharacterEllipsis" />
+            <Button Grid.Column="2" Classes="small" Content="Oturum ⚙" VerticalAlignment="Center"
+                    ToolTip.Tip="Token süresi dolunca kendiliğinden yenilensin: platforma girişte giden istekleri tanımlayın">
+              <Button.Flyout>
+                <Flyout Placement="LeftEdgeAlignedBottom" FlyoutPresenterClasses="wide">
+                  <StackPanel Width="580" Spacing="6">
+                    <TextBlock Text="Oturum yenileme" Classes="title" />
+                    <TextBlock Classes="hint"
+                               Text="Chrome'da F12 > Network açıkken platforma giriş yapın. Token'ı alan isteği ve ardından giden &quot;initiate user session&quot; isteğini sağ tık > Copy > Copy as cURL ile kopyalayıp aşağıya yapıştırın. Sorgu sırasında token süresi dolunca (ya da 401/403 gelince) bu istekler sırayla tekrarlanır; yeni token ve sunucunun verdiği çerezler müşteri ve istihbarat isteklerine kendiliğinden konur, hatalı numara bir kez daha denenir." />
+                    <TextBlock Text="1. Token isteği" Classes="label" />
+                    <TextBox Text="{Binding TokenRequestText}" AcceptsReturn="True" TextWrapping="Wrap" Height="110"
+                             FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="12" Watermark="curl 'https://.../token' ..." />
+                    <TextBlock Text="{Binding TokenRequestInfo}" Classes="hint" Opacity="1" IsVisible="{Binding HasTokenRequestInfo}"
+                               Classes.ok="{Binding TokenRequestOk}" Classes.bad="{Binding !TokenRequestOk}" />
+                    <TextBlock Text="2. Oturum başlatma isteği (initiate user session; isteğe bağlı)" Classes="label" />
+                    <TextBox Text="{Binding SessionRequestText}" AcceptsReturn="True" TextWrapping="Wrap" Height="110"
+                             FontFamily="Consolas,Menlo,DejaVu Sans Mono,monospace" FontSize="12" Watermark="curl 'https://.../session' ..." />
+                    <TextBlock Text="{Binding SessionRequestInfo}" Classes="hint" Opacity="1" IsVisible="{Binding HasSessionRequestInfo}"
+                               Classes.ok="{Binding SessionRequestOk}" Classes.bad="{Binding !SessionRequestOk}" />
+                    <Grid ColumnDefinitions="Auto,8,*" Margin="0,4,0,0">
+                      <TextBlock Text="Token alanı" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12" />
+                      <TextBox Grid.Column="2" Text="{Binding TokenField}" Watermark="boş: kendiliğinden bulunur (access_token, token, ...)" />
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                      <CheckBox Content="Token'ı kendiliğinden yenile" IsChecked="{Binding AutoRefresh}" />
+                      <Button Grid.Column="1" Content="Şimdi dene" Command="{Binding TestCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding TestResult}" Classes="hint" Opacity="1" IsVisible="{Binding HasTestResult}"
+                               Classes.ok="{Binding !TestResultIsError}" Classes.bad="{Binding TestResultIsError}" />
+                    <TextBlock Classes="hint"
+                               Text="Bu istekler giriş bilgisi ya da yenileme anahtarı içerebilir; ayar dosyasında Windows hesabınıza özel şifreli saklanır. Alınan token yalnızca bellekte tutulur, günlüğe yazılmaz. Giriş SMS/doğrulama kodu istiyorsa kendiliğinden yenileme yapılamaz." />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+            </Button>
+          </Grid>
         </StackPanel>
         <TextBlock DockPanel.Dock="Bottom" Classes="hint" Margin="0,6,0,0" Text="{Binding IdentifiersHint}" />
         <ListBox Name="Identifiers" Classes="ids" ItemsSource="{Binding VisibleRows}" SelectionMode="Multiple" Background="Transparent"

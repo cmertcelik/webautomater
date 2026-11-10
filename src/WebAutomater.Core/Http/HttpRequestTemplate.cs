@@ -98,14 +98,15 @@ public sealed partial record HttpRequestTemplate(
     private static string Substitute(string text, string id) => PlaceholderPattern().Replace(text, id);
 
     /// <summary>Numarayı yerine koyup gönderilecek isteği hazırlar.</summary>
-    public HttpRequestMessage Build(string id)
+    /// <param name="auth">Doluysa kopyadaki Bearer token ve çerezler yerine oturumdan gelen güncelleri kullanılır.</param>
+    public HttpRequestMessage Build(string id, AuthOverride? auth = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(Method), ResolveUrl(id));
         var body = Body is null ? null : Substitute(Body, id);
         if (body is not null)
             request.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
 
-        foreach (var (name, rawValue) in Headers)
+        foreach (var (name, rawValue) in auth is null ? Headers : auth.ApplyTo(Headers))
         {
             var value = Substitute(rawValue, id);
             if (request.Headers.TryAddWithoutValidation(name, value))
@@ -722,13 +723,13 @@ public static class QuerySender
     }
 
     public static async Task<QueryResult> SendAsync(HttpClient client, HttpRequestTemplate template, string id,
-        CancellationToken token = default)
+        CancellationToken token = default, AuthOverride? auth = null)
     {
         var url = template.ResolveUrl(id);
         var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            using var request = template.Build(id);
+            using var request = template.Build(id, auth);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, token);
             var body = await response.Content.ReadAsStringAsync(token);
             watch.Stop();

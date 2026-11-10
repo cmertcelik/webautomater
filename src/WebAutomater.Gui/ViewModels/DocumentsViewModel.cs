@@ -173,9 +173,12 @@ public sealed partial class DocumentsViewModel : ObservableObject
         foreach (var tag in settings.Tags ?? [])
             AttachTag(new GroupTagViewModel(tag));
         ValidateTags();
-        CustomerQuery = new QueryConfigViewModel("Müşteri sorgulama", settings.CustomerQuery,
+        Session = new SessionConfigViewModel(SecretStore.Unprotect(settings.LoginTokenRequest), SecretStore.Unprotect(settings.LoginSessionRequest),
+            settings.LoginTokenField, settings.LoginAutoRefresh);
+        Session.Changed += SaveSettings;
+        CustomerQuery = new QueryConfigViewModel("Müşteri sorgulama", SecretStore.Unprotect(settings.CustomerQuery),
             settings.CustomerQueryField ?? "value", "Müşteri kaydı yok");
-        IntelQuery = new QueryConfigViewModel("İstihbarat sorgulama", settings.IntelQuery,
+        IntelQuery = new QueryConfigViewModel("İstihbarat sorgulama", SecretStore.Unprotect(settings.IntelQuery),
             settings.IntelResultField ?? "value", "İstihbarat kaydı yok");
         foreach (var query in Queries)
         {
@@ -1232,6 +1235,9 @@ public sealed partial class DocumentsViewModel : ObservableObject
 
     public QueryConfigViewModel IntelQuery { get; }
 
+    /// <summary>Token'ın kendiliğinden yenilenmesi için giriş istekleri; iki sorgu da bunu kullanır.</summary>
+    public SessionConfigViewModel Session { get; }
+
     private IEnumerable<QueryConfigViewModel> Queries => [CustomerQuery, IntelQuery];
 
     /// <summary>Sorgu sonuçları penceresini açar. Görünüm tarafından atanır.</summary>
@@ -1270,7 +1276,7 @@ public sealed partial class DocumentsViewModel : ObservableObject
         if (targets.Count == 0)
             return;
         var run = new QueryRunViewModel(query.Title, template, targets.Select(r => (r.Value, r.KindText)),
-            query.ResultField, query.EmptyText);
+            query.ResultField, query.EmptyText, Session);
         ShowQueryResults(run);
         _ = run.RunAsync();
     }
@@ -1513,7 +1519,12 @@ public sealed partial class DocumentsViewModel : ObservableObject
         string? CustomerQueryField = null,
         // Önceki sürümde istihbarat için alan boş (yanıtın tamamı) kaydediliyordu; yeni varsayılan "value"
         // eski kayıtla ezilmesin diye ayar yeni adla tutulur.
-        string? IntelResultField = null);
+        string? IntelResultField = null,
+        // Giriş istekleri ve sorgu istekleri token/çerez/giriş bilgisi taşır: Windows'ta kullanıcıya özel şifreli saklanır.
+        string? LoginTokenRequest = null,
+        string? LoginSessionRequest = null,
+        string? LoginTokenField = null,
+        bool LoginAutoRefresh = true);
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WebAutomater", "belge-tarama.json");
@@ -1547,8 +1558,10 @@ public sealed partial class DocumentsViewModel : ObservableObject
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             var settings = new Settings(RootFolder, ExcelPath, Fields.Select(f => f.ToDefinition()).ToList(),
                 Tags.Select(t => t.ToDefinition()).ToList(), CaseMinDigits, CaseMaxDigits, SingleFileFolders,
-                NullIfEmpty(CustomerQuery?.RequestText), NullIfEmpty(IntelQuery?.RequestText),
-                CustomerQuery?.ResultField ?? "value", IntelQuery?.ResultField ?? "value");
+                SecretStore.Protect(NullIfEmpty(CustomerQuery?.RequestText)), SecretStore.Protect(NullIfEmpty(IntelQuery?.RequestText)),
+                CustomerQuery?.ResultField ?? "value", IntelQuery?.ResultField ?? "value",
+                SecretStore.Protect(NullIfEmpty(Session?.TokenRequestText)), SecretStore.Protect(NullIfEmpty(Session?.SessionRequestText)),
+                NullIfEmpty(Session?.TokenField), Session?.AutoRefresh ?? true);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)
@@ -1565,6 +1578,7 @@ public sealed partial class DocumentsViewModel : ObservableObject
         _openCts?.Cancel();
         _bulkCts?.Cancel();
         _groupCts?.Cancel();
+        Session.Dispose();
         Document?.Dispose();
     }
 }
